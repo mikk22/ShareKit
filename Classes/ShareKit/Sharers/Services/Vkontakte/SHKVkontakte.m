@@ -29,7 +29,6 @@
 #import "SHKConfiguration.h"
 #import "SHKVkontakteOAuthView.h"
 #import "SHKVKontakteRequest.h"
-#import "JSONKit.h"
 
 @interface SHKVkontakte()
 
@@ -101,7 +100,7 @@
 
 + (NSString *)sharerTitle
 {
-	return @"Vkontakte";
+	return SHKLocalizedString(@"Vkontakte");
 }
 
 + (BOOL)canShareText
@@ -128,6 +127,11 @@
 {
 	return YES;
 }
+
++ (BOOL)canShareFileOfMimeType:(NSString *)mimeType size:(NSUInteger)size {    
+    return YES;
+}
+
 
 #pragma mark -
 #pragma mark Configuration : Dynamic Enable
@@ -235,7 +239,8 @@
 	if (aRequest.success)
 	{
         // convert to JSON
-        NSDictionary *res = [aRequest.data objectFromJSONData];
+        NSError *error = nil;
+        NSDictionary *res = [NSJSONSerialization JSONObjectWithData:aRequest.data options:NSJSONReadingMutableContainers error:&error];
         NSArray *response=[res objectForKey:@"response"] ? [res objectForKey:@"response"] : nil;
         NSArray *userInfo=response.count ? [response objectAtIndex:0] : nil;
 
@@ -294,41 +299,37 @@
 		return NO;
 	
 	//[self setQuiet:NO];
-	
-	if (item.shareType == SHKShareTypeURL && item.URL)
-	{
-		[self sendTextAndLink];
-		return YES;
-	}
-	else if (item.shareType == SHKShareTypeText && item.text)
-	{
-		[self sendText];
-		return YES;
-	}	
-	else if (item.shareType == SHKShareTypeImage && item.image)
-	{	
-		[self sendImageAction];
-		return YES;
-	}
-	else if (item.shareType == SHKShareTypeUserInfo)
-	{
-        [self getUserInfo];
-		return YES;
-	} 
-	else 
-		return NO;
     
-    [self sendText];
+    switch (self.item.shareType) {
+        case SHKShareTypeURL:
+            [self sendTextAndLink];
+            break;
+        case SHKShareTypeText:
+            [self sendText];
+            break;
+        case SHKShareTypeImage:
+            [self sendImageAction];
+            break;
+        case SHKShareTypeUserInfo:
+            [self getUserInfo];
+            break;
+        case SHKShareTypeFile:
+            [self sendFileAction];
+            break;
+        default:
+            return NO;
+    }
+    
+    [self sendDidStart];
     return YES;
 }
-
 
 #pragma mark -	
 #pragma mark UI Implementation
 
 - (void)show
 {
-	if (item.shareType == SHKShareTypeText)        
+	if (self.item.shareType == SHKShareTypeText)        
 	{
 		[self showVkontakteForm];
 	}
@@ -342,7 +343,7 @@
 {
  	SHKCustomFormControllerLargeTextField *rootView = [[SHKCustomFormControllerLargeTextField alloc] initWithNibName:nil bundle:nil delegate:self];  
     
- 	rootView.text = item.text;
+ 	rootView.text = self.item.text;
 	self.navigationBar.tintColor = SHKCONFIG_WITH_ARGUMENT(barTintForView:,self);
  	[self pushViewController:rootView animated:NO];
 	[rootView release];
@@ -374,7 +375,11 @@
     [self sendRequest:getWallUploadServer withCaptcha:NO isFinishedSelector:@selector(didReceiveUploadUrl:)];
 }
 
-
+- (void)sendFileAction
+{
+	NSString *getWallUploadServer = [NSString stringWithFormat:@"https://api.vk.com/method/docs.getUploadServer?owner_id=%@&access_token=%@", self.accessUserId, self.accessToken];
+    [self sendRequest:getWallUploadServer withCaptcha:NO isFinishedSelector:@selector(didReceiveDocumentUploadUrl:)];    
+}
 
 //Receivers
 
@@ -383,11 +388,12 @@
     if ([self isRequestFinishedWithoutError:aRequest])
     {
         // convert to JSON
-        NSDictionary *responseDict = [aRequest.data objectFromJSONData] ? [aRequest.data objectFromJSONData] : nil;
+        NSError *error = nil;
+        NSDictionary *responseDict = [NSJSONSerialization JSONObjectWithData:aRequest.data options:NSJSONReadingMutableContainers error:&error];
         NSString *upload_url = [[responseDict objectForKey:@"response"] objectForKey:@"upload_url"];
         if (upload_url)
         {
-            UIImage *image = item.image;
+            UIImage *image = self.item.image;
             NSData *imageData = UIImageJPEGRepresentation(image, 1.0f);
             //processing to next request
             [self sendPOSTRequest:upload_url withImageData:imageData];
@@ -396,20 +402,34 @@
     }
 }
 
-
-
+- (void)didReceiveDocumentUploadUrl:(SHKRequest *)aRequest
+{
+    if ([self isRequestFinishedWithoutError:aRequest])
+    {
+        // convert to JSON
+        NSError *error = nil;
+        NSDictionary *responseDict = [NSJSONSerialization JSONObjectWithData:aRequest.data options:NSJSONReadingMutableContainers error:&error];
+        NSString *upload_url = [[responseDict objectForKey:@"response"] objectForKey:@"upload_url"];
+        if (upload_url)
+        {
+            [self sendPOSTRequest:upload_url withFileData:self.item.data fileName:self.item.filename mime:self.item.mimeType];
+            return;
+        }
+    }
+}
 
 - (void)didFinishSaveWallPhotoRequest:(SHKRequest *)aRequest
 {
     if ([self isRequestFinishedWithoutError:aRequest])
     {
         // convert to JSON
-        NSDictionary *responseDict = [aRequest.data objectFromJSONData] ? [aRequest.data objectFromJSONData] : nil;
+        NSError *error = nil;
+        NSDictionary *responseDict = [NSJSONSerialization JSONObjectWithData:aRequest.data options:NSJSONReadingMutableContainers error:&error];
         NSDictionary *photoDict = [[responseDict objectForKey:@"response"] lastObject];
         NSString *photoId = [photoDict objectForKey:@"id"];
         if (photoDict && photoId)
         {
-            NSString *postToWallLink = [NSString stringWithFormat:@"https://api.vk.com/method/wall.post?owner_id=%@&access_token=%@&message=%@&attachment=%@", self.accessUserId, self.accessToken, [self URLEncodedString:item.title], photoId];
+            NSString *postToWallLink = [NSString stringWithFormat:@"https://api.vk.com/method/wall.post?owner_id=%@&access_token=%@&message=%@&attachment=%@", self.accessUserId, self.accessToken, [self URLEncodedString:self.item.title], photoId];
             
             //processing to next request
             [self sendRequest:postToWallLink withCaptcha:NO];
@@ -418,6 +438,29 @@
     }
 }
 
+- (void)didFinishSaveDocumentRequest:(SHKRequest *)aRequest
+{
+    if ([self isRequestFinishedWithoutError:aRequest])
+    {
+        // convert to JSON
+        NSError *error = nil;
+        NSDictionary *responseDict = [NSJSONSerialization JSONObjectWithData:aRequest.data options:NSJSONReadingMutableContainers error:&error];
+        NSDictionary *documentDict = [[responseDict objectForKey:@"response"] lastObject];
+        NSString *ownerId = [documentDict objectForKey:@"owner_id"];
+        NSString *documentId = [documentDict objectForKey:@"did"];
+        if (documentDict && ownerId && documentId)
+        {
+            NSString *attachment = [NSString stringWithFormat:@"doc%@_%@", ownerId, documentId];
+            if (self.item.URL)
+                attachment = [attachment stringByAppendingFormat:@",%@", [self URLEncodedString:[self.item.URL absoluteString]]];
+            NSString *postToWallLink = [NSString stringWithFormat:@"https://api.vk.com/method/wall.post?owner_id=%@&access_token=%@&message=%@&attachment=%@", self.accessUserId, self.accessToken, [self URLEncodedString:self.item.title], attachment];
+            
+            //processing to next request
+            [self sendRequest:postToWallLink withCaptcha:NO];
+            return;
+        }
+    }
+}
 
 
 
@@ -471,7 +514,7 @@
 
 - (void) sendText
 {		
-	NSString *sendTextMessage = [NSString stringWithFormat:@"https://api.vk.com/method/wall.post?owner_id=%@&access_token=%@&message=%@", self.accessUserId, self.accessToken, [self URLEncodedString:item.text]];
+	NSString *sendTextMessage = [NSString stringWithFormat:@"https://api.vk.com/method/wall.post?owner_id=%@&access_token=%@&message=%@", self.accessUserId, self.accessToken, [self URLEncodedString:self.item.text]];
 	
 	[self sendRequest:sendTextMessage withCaptcha:NO];
 }
@@ -479,7 +522,7 @@
 
 - (void) sendTextAndLink
 {	
-	NSString *sendTextAndLinkMessage = [NSString stringWithFormat:@"https://api.vk.com/method/wall.post?owner_id=%@&access_token=%@&message=%@&attachment=%@", self.accessUserId, self.accessToken, [self URLEncodedString:item.text]?[self URLEncodedString:item.text]:[item.URL absoluteString], [item.URL absoluteString]];
+	NSString *sendTextAndLinkMessage = [NSString stringWithFormat:@"https://api.vk.com/method/wall.post?owner_id=%@&access_token=%@&message=%@&attachment=%@", self.accessUserId, self.accessToken, [self URLEncodedString:self.item.text]?[self URLEncodedString:self.item.text]:[self.item.URL absoluteString], [self.item.URL absoluteString]];
 	
 	[self sendRequest:sendTextAndLinkMessage withCaptcha:NO];
 }
@@ -527,7 +570,8 @@
     if (aRequest.success)
     {
         // convert to JSON
-        NSDictionary *res = [aRequest.data objectFromJSONData] ? [aRequest.data objectFromJSONData] : nil;
+        NSError *error = nil;
+        NSDictionary *res = [NSJSONSerialization JSONObjectWithData:aRequest.data options:NSJSONReadingMutableContainers error:&error];
 
         if (res)
         {
@@ -562,7 +606,8 @@
 {
     if ([self isRequestFinishedWithoutError:aRequest])
     {
-        NSDictionary *res = [aRequest.data objectFromJSONData] ? [aRequest.data objectFromJSONData] : nil;
+        NSError *error = nil;
+        NSDictionary *res = [NSJSONSerialization JSONObjectWithData:aRequest.data options:NSJSONReadingMutableContainers error:&error];
         NSString *errorMsg = [[res objectForKey:@"error"] objectForKey:@"error_msg"];
         
         if([errorMsg isEqualToString:@"Captcha needed"])
@@ -593,7 +638,7 @@
 
 ///////////////////////////////////////////////////////////////////////////
 //
-#pragma mark - Post Request With ImageData - 
+#pragma mark - Post Request With ImageData or FileData - 
 //
 ///////////////////////////////////////////////////////////////////////////
 
@@ -635,7 +680,40 @@
 }
 
 
-
+- (void) sendPOSTRequest:(NSString *)reqURl withFileData:(NSData *)fileData fileName:(NSString*)filename mime:(NSString*)mime
+{
+    //creating headers
+	CFUUIDRef uuid = CFUUIDCreate(nil);
+	NSString *uuidString = [(NSString*)CFUUIDCreateString(nil, uuid) autorelease];
+	CFRelease(uuid);
+    
+	NSString *stringBoundary = [NSString stringWithFormat:@"0xKhTmLbOuNdArY-%@",uuidString];
+	NSString *endItemBoundary = [NSString stringWithFormat:@"\r\n--%@\r\n",stringBoundary];
+	NSString *contentType = [NSString stringWithFormat:@"multipart/form-data;  boundary=%@", stringBoundary];
+    
+    //creating body
+	NSMutableData *body = [NSMutableData data];
+	[body appendData:[[NSString stringWithFormat:@"--%@\r\n",stringBoundary] dataUsingEncoding:NSUTF8StringEncoding]];
+	[body appendData:[[NSString stringWithFormat:@"Content-Disposition: form-data; name=\"file\"; filename=\"%@\"\r\n", filename] dataUsingEncoding:NSUTF8StringEncoding]];
+	[body appendData:[[NSString stringWithFormat:@"Content-Type: %@\r\n\r\n", mime] dataUsingEncoding:NSUTF8StringEncoding]];
+	[body appendData:fileData];
+	[body appendData:[[NSString stringWithFormat:@"%@",endItemBoundary] dataUsingEncoding:NSUTF8StringEncoding]];
+    
+    self.request = [[[SHKVKontakteRequest alloc] initWithURL:[NSURL URLWithString:reqURl]
+                                                  paramsData:[NSData dataWithData:body]
+                                                    delegate:self
+                                          isFinishedSelector:@selector(didFinishPOSTRequest:)
+                                                      method:@"POST"
+                                                   autostart:NO] autorelease];
+    
+    //setting headers
+    self.request.headerFields=[NSDictionary dictionaryWithObjectsAndKeys:
+                               @"8bit",         @"Content-Transfer-Encoding",
+                               contentType,     @"Content-Type",
+                               nil];
+    
+    [self.request start];
+}
 
 
 - (void)didFinishPOSTRequest:(SHKRequest *)aRequest
@@ -643,16 +721,23 @@
     if ([self isRequestFinishedWithoutError:aRequest])
     {
         // convert to JSON
-        NSDictionary *responseDict = [aRequest.data objectFromJSONData] ? [aRequest.data objectFromJSONData] : nil;
+        NSError *error = nil;
+        NSDictionary *responseDict = [NSJSONSerialization JSONObjectWithData:aRequest.data options:NSJSONReadingMutableContainers error:&error];
         NSString *hash = [responseDict objectForKey:@"hash"];
         NSString *photo = [responseDict objectForKey:@"photo"];
         NSString *server = [responseDict objectForKey:@"server"];
+        NSString *file = [responseDict objectForKey:@"file"];
         
         if (hash && photo && server)
         {
             //processing to next request
             NSString *saveWallPhoto = [NSString stringWithFormat:@"https://api.vk.com/method/photos.saveWallPhoto?owner_id=%@&access_token=%@&server=%@&photo=%@&hash=%@", self.accessUserId, self.accessToken ,server, [self URLEncodedString:photo], hash];
             [self sendRequest:saveWallPhoto withCaptcha:NO isFinishedSelector:@selector(didFinishSaveWallPhotoRequest:)];
+        }
+        else if (file)
+        {
+            NSString *saveWallPhoto = [NSString stringWithFormat:@"https://api.vk.com/method/docs.save?owner_id=%@&access_token=%@&file=%@", self.accessUserId, self.accessToken, [self URLEncodedString:file]];
+            [self sendRequest:saveWallPhoto withCaptcha:NO isFinishedSelector:@selector(didFinishSaveDocumentRequest:)];
         }
     }
 }
