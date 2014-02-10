@@ -25,7 +25,20 @@
 //
 
 #import "SHKPlurk.h"
-#import "SHKConfiguration.h"
+#import "SharersCommonHeaders.h"
+#import "NSMutableDictionary+NSNullsToEmptyStrings.h"
+
+NSString * const kSHKPlurkUserInfo = @"kSHKPlurkUserInfo";
+NSString * const SHKPlurkQualifierKey = @"qualifier";
+NSString * const SHKPlurkPrivateKey = @"limited_to";
+
+@interface SHKPlurk ()
+
+@property BOOL imageUploaded;
+@property BOOL isLoadingUserInfo;
+@property (strong, nonatomic) id getUserInfoObserver;
+
+@end
 
 @implementation SHKPlurk
 
@@ -74,10 +87,12 @@
 	return YES;
 }
 
-#pragma mark -
-#pragma mark Configuration : Dynamic Enable
++ (BOOL)canGetUserInfo {
+    
+    return YES;
+}
 
-- (BOOL)shouldAutoShare
++ (BOOL)canAutoShare
 {
 	return NO;
 }
@@ -90,72 +105,114 @@
 	return [self restoreAccessToken];
 }
 
-- (void)promptAuthorization
-{
-	[super promptAuthorization];
-}
-
 - (void)tokenAccessModifyRequest:(OAMutableURLRequest *)oRequest
 {
   [oRequest setOAuthParameterName:@"oauth_verifier" withValue:[authorizeResponseQueryVars objectForKey:@"oauth_verifier"]];
 }
 
++ (void)logout {
+	
+	[[NSUserDefaults standardUserDefaults] removeObjectForKey:kSHKPlurkUserInfo];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+	[super logout];
+}
+
 
 #pragma mark -
-#pragma mark UI Implementation
-
-//TODO change form to normal form controller and add type of plurk (is, shares, etc) option controller. This should be done after shkformcontroller can have type large text field.
-- (void)show
+#pragma mark Share Form
+- (NSArray *)shareFormFieldsForType:(SHKShareType)type
 {
-	if (self.item.shareType == SHKShareTypeURL)
+    if (self.item.shareType == SHKShareTypeUserInfo) return nil;
+    
+    //we need username to present share sheet. After download will try to present again.
+    NSString *username = [[self class] username];
+    if (!username) {
+        
+        SHKPlurk *infoSharer = [SHKPlurk getUserInfo];
+        [[SHK currentHelper] keepSharerReference:self]; //so that the sharer still exists aftern userInfo download, reference removed in callback
+        __weak typeof(self) weakSelf = self;
+        self.getUserInfoObserver = [[NSNotificationCenter defaultCenter] addObserverForName:SHKSendDidFinishNotification
+                                                                                      object:infoSharer
+                                                                                       queue:[NSOperationQueue mainQueue]
+                                                                                  usingBlock:^(NSNotification *notification) {
+                                                                                      
+                                                                                      weakSelf.isLoadingUserInfo = NO;
+                                                                                      [weakSelf show];
+                                                                                      [[SHK currentHelper] removeSharerReference:self];
+                                                                                      
+                                                                                      [[NSNotificationCenter defaultCenter] removeObserver:weakSelf.getUserInfoObserver];
+                                                                                      weakSelf.getUserInfoObserver = nil;
+                                                                                      
+                                                                                  }];
+
+        self.isLoadingUserInfo = YES;
+        return nil; //means continue silently. In send method if isLoadingUserInfo escapes without sending anything.
+    }
+    
+    if (self.item.shareType == SHKShareTypeURL)
 	{
         [self.item setCustomValue:[NSString stringWithFormat:@"%@ (%@)", [self.item.URL.absoluteString stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding], self.item.title] forKey:@"status"];
-        [self showPlurkForm];
 	}
-  
+    
 	else if (self.item.shareType == SHKShareTypeImage)
 	{
-		[self uploadImage];
+		if (!self.imageUploaded) return nil; //this means we continue to send silently
 	}
-  
+    
 	else if (self.item.shareType == SHKShareTypeText)
 	{
 		[self.item setCustomValue:self.item.text forKey:@"status"];
-		[self showPlurkForm];
 	}
+    
+    SHKFormFieldOptionPickerSettings *userDoesField = [SHKFormFieldOptionPickerSettings label:username
+                                                                                          key:SHKPlurkQualifierKey
+                                                                                        start:nil
+                                                                                  pickerTitle:username
+                                                                              selectedIndexes:[[NSMutableIndexSet alloc] initWithIndex:2]
+                                                                                displayValues:@[@"loves", @"likes", @"shares", @"gives", @"hates", @"wants", @"has", @"will", @"asks", @"wishes", @"was", @"feels", @"thinks", @"says", @"is", @"freestyle", @"hopes", @"needs", @"wonders"]
+                                                                                   saveValues:nil
+                                                                                allowMultiple:NO
+                                                                                 fetchFromWeb:NO
+                                                                                     provider:nil];
+    
+    SHKFormFieldLargeTextSettings *commentField = [SHKFormFieldLargeTextSettings label:SHKLocalizedString(@"Comment")
+                                                                                   key:@"status"
+                                                                                 start:[self.item customValueForKey:@"status"]
+                                                                                  item:self.item];
+    commentField.maxTextLength = 210;
+    commentField.select = YES;
+    commentField.validationBlock = ^ (SHKFormFieldLargeTextSettings *formFieldSettings) {
+        
+        BOOL emptyCriterium =  [formFieldSettings.valueToSave length] > 0;
+        BOOL maxTextLenCriterium = [formFieldSettings.valueToSave length] <= formFieldSettings.maxTextLength;
+        
+        if (emptyCriterium && maxTextLenCriterium) {
+            return YES;
+        } else {
+            return NO;
+        }
+    };
+
+    SHKFormFieldSettings *privateField = [SHKFormFieldSettings label:SHKLocalizedString(@"Private")
+                                                                 key:SHKPlurkPrivateKey
+                                                                type:SHKFormFieldTypeSwitch
+                                                               start:SHKFormFieldSwitchOff];
+    
+    return @[userDoesField, commentField, privateField];
 }
 
-- (void)showPlurkForm
-{
-	SHKFormControllerLargeTextField *rootView = [[SHKFormControllerLargeTextField alloc] initWithNibName:nil bundle:nil delegate:self];	
-	
-	// force view to load so we can set textView text
-	[rootView view];
-	
-	rootView.text = [self.item customValueForKey:@"status"];
-  rootView.maxTextLength = 210;
-	rootView.image = self.item.image;
-  
-  self.navigationBar.tintColor = SHKCONFIG_WITH_ARGUMENT(barTintForView:,self);
-	
-	[self pushViewController:rootView animated:NO];
-  [rootView release];
-	
-	[[SHK currentHelper] showViewController:self];	
++ (NSString *)username {
+    
+    NSDictionary *userInfo = [[NSUserDefaults standardUserDefaults] objectForKey:kSHKPlurkUserInfo];
+    NSString *result = userInfo[@"nick_name"];
+    return result;
 }
 
-- (void)sendForm:(SHKFormControllerLargeTextField *)form
-{
-	[self.item setCustomValue:form.textView.text forKey:@"status"];
-	[self tryToSend];
-}
-
-#pragma mark -
+ #pragma mark -
 
 - (void)uploadImage
 {
-	if (!self.quiet)
-		[[SHKActivityIndicator currentIndicator] displayActivity:SHKLocalizedString(@"Uploading Image...")];
+    [self displayActivity:SHKLocalizedString(@"Uploading Image...")];
   
 	OAMutableURLRequest *oRequest = [[OAMutableURLRequest alloc] initWithURL:[NSURL URLWithString:@"http://www.plurk.com/APP/Timeline/uploadPicture"]
                                                                   consumer:consumer
@@ -173,16 +230,15 @@
                                                                                didFinishSelector:@selector(uploadImageTicket:didFinishWithData:)
                                                                                  didFailSelector:@selector(uploadImageTicket:didFailWithError:)];
 	[fetcher start];
-	[oRequest release];
 }
 
 - (void)uploadImageTicket:(OAServiceTicket *)ticket didFinishWithData:(NSData *)data
 {
-	[[SHKActivityIndicator currentIndicator] hide];
+	[self hideActivityIndicator];
   
   if (SHKDebugShowLogs) {
-    SHKLog(@"Plurk Upload Picture Status Code: %d", [ticket.response statusCode]);
-    SHKLog(@"Plurk Upload Picture Error: %@", [[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] autorelease]);
+    SHKLog(@"Plurk Upload Picture Status Code: %ld", (long)[ticket.response statusCode]);
+    SHKLog(@"Plurk Upload Picture Error: %@", [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]);
   }
   
 	if (ticket.didSucceed) {
@@ -193,7 +249,8 @@
 		if ([response objectForKey:@"full"]) {
 			NSString *urlString = [response objectForKey:@"full"];
 			[self.item setCustomValue:[NSString stringWithFormat:@"%@ %@", self.item.title, urlString] forKey:@"status"];
-			[self showPlurkForm];
+            self.imageUploaded = YES;
+			[self show];
 		} else {
 			[self alertUploadImageWithError:nil];
 		}
@@ -204,7 +261,7 @@
 
 - (void)uploadImageTicket:(OAServiceTicket *)ticket didFailWithError:(NSError *)error
 {
-	[[SHKActivityIndicator currentIndicator] hide];
+	[self hideActivityIndicator];
   
 	[self alertUploadImageWithError:error];
 }
@@ -212,59 +269,68 @@
 
 - (void)alertUploadImageWithError:(NSError *)error
 {
-	[[[[UIAlertView alloc] initWithTitle:SHKLocalizedString(@"Request Error")
+	[[[UIAlertView alloc] initWithTitle:SHKLocalizedString(@"Request Error")
                                message:SHKLocalizedString(@"There was an error while sharing")
                               delegate:nil
                      cancelButtonTitle:SHKLocalizedString(@"Continue")
-                     otherButtonTitles:nil] autorelease] show];
+                     otherButtonTitles:nil] show];
 }
 
 
 #pragma mark -
 #pragma mark Share API Methods
 
-- (BOOL)validate
-{
-	NSString *status = [self.item customValueForKey:@"status"];
-	return status != nil && status.length > 0 && status.length <= 210;
-}
-
 - (BOOL)send
 {
-	if (![self validate])
-		[self show];
-  
-	else
-	{
-    [self sendStatus];
+	if (self.isLoadingUserInfo) return NO; //wait for userInfo downloaded callback, will show again
     
-		// Notify delegate
+    if (self.item.shareType == SHKShareTypeUserInfo) self.quiet = YES;
+    
+    if (![self validateItem]) return NO;
+  
+    if (self.item.shareType == SHKShareTypeImage && !self.imageUploaded) {
+        [self uploadImage];
+    } else {
+        [self sendStatus];
 		[self sendDidStart];
-    
-		return YES;
-	}
-  
-	return NO;
+    }
+    return YES;
 }
 
 - (void)sendStatus
 {
-	OAMutableURLRequest *oRequest = [[OAMutableURLRequest alloc] initWithURL:[NSURL URLWithString:@"http://www.plurk.com/APP/Timeline/plurkAdd"]
-                                                                  consumer:consumer
-                                                                     token:accessToken
-                                                                     realm:nil
-                                                         signatureProvider:nil];
-  
-	[oRequest setHTTPMethod:@"POST"];
-  
-	OARequestParameter *qualifierParam = [[OARequestParameter alloc] initWithName:@"qualifier"
-                                                                          value:@"shares"];
-	OARequestParameter *statusParam = [[OARequestParameter alloc] initWithName:@"content"
-                                                                       value:[self.item customValueForKey:@"status"]];
-	NSArray *params = [NSArray arrayWithObjects:qualifierParam, statusParam, nil];
-	[oRequest setParameters:params];
-  [qualifierParam release];
-	[statusParam release];
+	OAMutableURLRequest *oRequest;
+    
+    if (self.item.shareType == SHKShareTypeUserInfo) {
+        oRequest = [[OAMutableURLRequest alloc] initWithURL:[[NSURL alloc] initWithString:@"http://www.plurk.com/APP/Users/currUser"]
+                                                   consumer:consumer
+                                                      token:accessToken
+                                                      realm:nil
+                                          signatureProvider:nil];
+        [oRequest setHTTPMethod:@"POST"];
+    } else {
+    
+        oRequest = [[OAMutableURLRequest alloc] initWithURL:[NSURL URLWithString:@"http://www.plurk.com/APP/Timeline/plurkAdd"]
+                                                   consumer:consumer
+                                                      token:accessToken
+                                                      realm:nil
+                                          signatureProvider:nil];
+        
+        [oRequest setHTTPMethod:@"POST"];
+        
+        OARequestParameter *qualifierParam = [[OARequestParameter alloc] initWithName:@"qualifier"
+                                                                                value:[self.item customValueForKey:SHKPlurkQualifierKey]];
+        OARequestParameter *statusParam = [[OARequestParameter alloc] initWithName:@"content"
+                                                                             value:[self.item customValueForKey:@"status"]];
+        NSMutableArray *params = [@[qualifierParam, statusParam] mutableCopy];
+        BOOL isPrivate = [[self.item customValueForKey:SHKPlurkPrivateKey] boolValue];
+        if (isPrivate) {
+            OARequestParameter *privateParam = [[OARequestParameter alloc] initWithName:SHKPlurkPrivateKey value:@"[0]"];
+            [params addObject:privateParam];
+        }
+        
+        [oRequest setParameters:params];
+    }
   
 	OAAsynchronousDataFetcher *fetcher = [OAAsynchronousDataFetcher asynchronousFetcherWithRequest:oRequest
                                                                                         delegate:self
@@ -272,16 +338,28 @@
                                                                                  didFailSelector:@selector(sendStatusTicket:didFailWithError:)];	
   
 	[fetcher start];
-	[oRequest release];
 }
 
 - (void)sendStatusTicket:(OAServiceTicket *)ticket didFinishWithData:(NSData *)data
 {
-	if (ticket.didSucceed)
-		[self sendDidFinish];
-  
-	else
-	{
+	if (ticket.didSucceed) {
+        
+        if (self.item.shareType == SHKShareTypeUserInfo) {
+            NSError *error;
+            NSMutableDictionary *userInfo = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:&error];
+            if (error) {
+                SHKLog(@"Error when parsing json user info request:%@", [error description]);
+            }
+            
+            [userInfo convertNSNullsToEmptyStrings];
+            [[NSUserDefaults standardUserDefaults] setObject:userInfo forKey:kSHKPlurkUserInfo];
+        }
+        
+        [self sendDidFinish];
+    
+    } else {
+        
+        [[SHK currentHelper] removeSharerReference:self]; //to be sure, see shareFormFieldsForType
         NSError *error = nil;
         NSDictionary *response = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:&error];
         

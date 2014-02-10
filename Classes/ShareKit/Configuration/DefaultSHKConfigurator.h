@@ -25,22 +25,9 @@
 //
 //
 
-/*
- Debugging
- ------
- To show ShareKit specific debug output in the console, define _SHKDebugShowLogs (uncomment next line).
- */
-//#define _SHKDebugShowLogs
-
-#ifdef _SHKDebugShowLogs
-#define SHKDebugShowLogs			1
-#define SHKLog( s, ... ) NSLog( @"<%p %@:(%d)> %@", self, [[NSString stringWithUTF8String:__FILE__] lastPathComponent], __LINE__, [NSString stringWithFormat:(s), ##__VA_ARGS__] )
-#else
-#define SHKDebugShowLogs			0
-#define SHKLog( s, ... )
-#endif
-
 #import <Foundation/Foundation.h>
+
+@class SHKFile;
 
 @interface DefaultSHKConfigurator : NSObject 
 
@@ -49,15 +36,16 @@
 - (NSArray*)defaultFavoriteURLSharers;
 - (NSArray*)defaultFavoriteImageSharers;
 - (NSArray*)defaultFavoriteTextSharers;
-- (NSArray*)defaultFavoriteFileSharers __attribute__((deprecated("use defaultFavoriteSharersForMimeType: instead")));
-- (NSArray*)defaultFavoriteSharersForMimeType:(NSString *)mimeType;
+- (NSArray*)defaultFavoriteFileSharers __attribute__((deprecated("use defaultFavoriteSharersForFile: instead")));
+- (NSArray*)defaultFavoriteSharersForMimeType:(NSString *)mimeType __attribute__((deprecated("use defaultFavoriteSharersForFile: instead")));
+- (NSArray*)defaultFavoriteSharersForFile:(SHKFile *)file;
 - (NSString*)vkontakteAppId;
 - (NSString*)facebookAppId;
 - (NSString*)facebookLocalAppId;
 - (NSArray*)facebookWritePermissions;
 - (NSArray*)facebookReadPermissions;
 - (NSNumber*)forcePreIOS6FacebookPosting;
-- (NSString*)readItLaterKey;
+- (NSString *)pocketConsumerKey;
 - (NSString*)diigoKey;
 - (NSNumber*)forcePreIOS5TwitterAccess;
 - (NSString*)googlePlusClientId;
@@ -91,6 +79,12 @@
 - (NSString *)plurkAppKey;
 - (NSString *)plurkAppSecret;
 - (NSString *)plurkCallbackURL;
+- (NSNumber *)instagramLetterBoxImages;
+- (UIColor *)instagramLetterBoxColor;
+- (NSNumber *)instagramOnly;
+- (NSString*)youTubeConsumerKey;
+- (NSString*)youTubeSecret;
+- (NSNumber *)useAppleShareUI;
 - (NSNumber*)shareMenuAlphabeticalOrder;
 - (NSString*)barStyle;
 - (UIColor*)barTintForView:(UIViewController*)vc;
@@ -98,7 +92,6 @@
 - (UIColor*)formBackgroundColor;
 - (NSString*)modalPresentationStyleForController:(UIViewController *)controller;
 - (NSString*)modalTransitionStyleForController:(UIViewController *)controller;
-- (NSNumber *)isUsingCocoaPods;
 - (NSNumber*)maxFavCount;
 - (NSNumber*)autoOrderFavoriteSharers;
 - (NSString*)favsPrefixKey;
@@ -107,11 +100,21 @@
 - (NSNumber*)showActionSheetMoreButton;
 - (NSNumber*)allowOffline;
 - (NSNumber*)allowAutoShare;
-- (Class)SHKActionSheetSubclass;
 - (Class)SHKShareMenuSubclass;
 - (Class)SHKShareMenuCellSubclass;
 - (Class)SHKFormControllerSubclass;
+- (Class)SHKUploadsViewControllerSubclass;
+- (Class)SHKAccountsViewControllerSubclass;
+- (Class)SHKActivityIndicatorSubclass;
+//SHKDropbox
+-(NSString *)dropboxAppKey;
+-(NSString *)dropboxAppSecret;
+-(NSString *)dropboxRootFolder;
+-(NSNumber *)dropboxShouldOverwriteExistedFile;
+//SHKBuffer
+- (NSNumber *)bufferShouldShortenURLS;
 
+#pragma mark - default values for sharer specific extension SHKItem properties
 //SHKPrint
 - (NSNumber*)printOutputType;
 //SHKMail
@@ -127,8 +130,6 @@
 //SHKInstagram and future others
 -(NSString*) popOverSourceRect;
 //SHKDropbox
--(NSString *)dropboxAppKey;
--(NSString *)dropboxAppSecret;
--(NSString *)dropboxRootFolder;
--(BOOL)dropboxShouldOverwriteExistedFile;
+- (NSString *)dropboxDestinationDirectory;
+
 @end

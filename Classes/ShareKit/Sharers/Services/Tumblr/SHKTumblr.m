@@ -23,7 +23,8 @@
 //  THE SOFTWARE.
 
 #import "SHKTumblr.h"
-#import "SHKConfiguration.h"
+
+#import "SharersCommonHeaders.h"
 #import "NSMutableDictionary+NSNullsToEmptyStrings.h"
 
 #define MAX_SIZE_MB_PHOTO 10
@@ -34,7 +35,7 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
 
 @interface SHKTumblr ()
 
-@property (nonatomic, retain) id getUserBlogsObserver;
+@property (nonatomic, strong) id getUserBlogsObserver;
 
 @end
 
@@ -45,9 +46,7 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
 - (void)dealloc {
     
     [[NSNotificationCenter defaultCenter] removeObserver:getUserBlogsObserver];
-    [getUserBlogsObserver release];
     
-    [super dealloc];
 }
 
 #pragma mark -
@@ -58,21 +57,22 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
 + (BOOL)canShareURL { return YES; }
 + (BOOL)canShareImage { return YES; }
 + (BOOL)canShareText { return YES; }
-+ (BOOL)canShareFileOfMimeType:(NSString *)mimeType size:(NSUInteger)size {
++ (BOOL)canShareFile:(SHKFile *)file {
     
-    NSUInteger sizeInMB = size/1024/1024;
+    NSUInteger sizeInMB = file.size/1024/1024;
     
     BOOL result = NO;
-    if ([mimeType hasPrefix:@"image/"]) {
+    if ([file.mimeType hasPrefix:@"image/"]) {
         result = sizeInMB < MAX_SIZE_MB_PHOTO;
-    } else if ([mimeType hasPrefix:@"audio/"]) {
+    } else if ([file.mimeType hasPrefix:@"audio/"]) {
         result = sizeInMB < MAX_SIZE_MB_AUDIO;
-    } else if ([mimeType hasPrefix:@"video/"]) {
+    } else if ([file.mimeType hasPrefix:@"video/"]) {
         result = sizeInMB < MAX_SIZE_MB_VIDEO;
     }
     return result;
 }
 + (BOOL)canGetUserInfo { return YES; }
++ (BOOL)canAutoShare { return NO; }
 
 #pragma mark -
 #pragma mark Authentication
@@ -89,7 +89,7 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
 	    self.authorizeURL = [NSURL URLWithString:@"http://www.tumblr.com/oauth/authorize"];
 	    self.accessURL = [NSURL URLWithString:@"http://www.tumblr.com/oauth/access_token"];
 		
-		self.signatureProvider = [[[OAHMAC_SHA1SignatureProvider alloc] init] autorelease];
+		self.signatureProvider = [[OAHMAC_SHA1SignatureProvider alloc] init];
 	}	
 	return self;
 }
@@ -106,6 +106,12 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
 	[super logout];
 }
 
++ (NSString *)username {
+    
+    NSDictionary *userInfo = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kSHKTumblrUserInfo];
+    NSString *result = userInfo[@"response"][@"user"][@"name"];
+    return result;
+}
 
 #pragma mark -
 #pragma mark Share Form
@@ -117,43 +123,46 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
     //if there is user info saved already in defaults, show the first blog as default option, otherwise user must choose one.
     NSArray *userBlogURLs = [self userBlogURLs];
     NSString *defaultBlogURL = nil;
-    NSString *defaultPickedIndex = @"-1";
+    NSMutableIndexSet *defaultPickedIndex = [[NSMutableIndexSet alloc] init];
     NSMutableArray *defaultItemsList = [NSMutableArray arrayWithCapacity:0];
     if ([userBlogURLs count] > 0) {
         defaultBlogURL = userBlogURLs[0];
-        defaultPickedIndex = @"0";
+        [defaultPickedIndex addIndex:0];
         [defaultItemsList addObject:defaultBlogURL];
     }
     
-    SHKFormFieldSettings *blogField = [SHKFormFieldSettings label:SHKLocalizedString(@"Blog")
-                                                              key:@"blog"
-                                                             type:SHKFormFieldTypeOptionPicker
-                                                            start:defaultBlogURL
-                                                 optionPickerInfo:[[@{@"title":SHKLocalizedString(@"Choose blog"),
-                                                                    @"curIndexes":defaultPickedIndex,
-                                                                    @"itemsList":defaultItemsList,
-                                                                    @"static":[NSNumber numberWithBool:NO],
-                                                                    @"allowMultiple":[NSNumber numberWithBool:NO],
-                                                                    @"SHKFormOptionControllerOptionProvider":self} mutableCopy] autorelease]
-                                         optionDetailLabelDefault:SHKLocalizedString(@"Select blog")];
+    SHKFormFieldOptionPickerSettings *blogField = [SHKFormFieldOptionPickerSettings label:SHKLocalizedString(@"Blog")
+                                                                                      key:@"blog"
+                                                                                    start:SHKLocalizedString(@"Select blog")
+                                                                              pickerTitle:SHKLocalizedString(@"Choose blog")
+                                                                          selectedIndexes:defaultPickedIndex
+                                                                            displayValues:userBlogURLs
+                                                                               saveValues:nil
+                                                                            allowMultiple:NO
+                                                                             fetchFromWeb:YES
+                                                                                 provider:self];
+    blogField.validationBlock = ^ (SHKFormFieldOptionPickerSettings *formFieldSettings) {
+        
+        BOOL result = [formFieldSettings valueToSave];
+        return result;
+    };
     
     SHKFormFieldSettings *tagsField = [SHKFormFieldSettings label:SHKLocalizedString(@"Tag, tag")
                                                               key:@"tags"
                                                              type:SHKFormFieldTypeText
                                                             start:[self.item.tags componentsJoinedByString:@", "]];
     
-    SHKFormFieldSettings *publishField = [SHKFormFieldSettings label:SHKLocalizedString(@"Publish")
-                                                                 key:@"publish"
-                                                                type:SHKFormFieldTypeOptionPicker
-                                                               start:SHKLocalizedString(@"Publish now")
-                                                    optionPickerInfo:[[@{@"title":SHKLocalizedString(@"Publish type"),
-                                                                       @"curIndexes":@"0",
-                                                                       @"itemsList":@[SHKLocalizedString(@"Publish now"), SHKLocalizedString(@"Draft"), SHKLocalizedString(@"Add to queue"), SHKLocalizedString(@"Private")],
-                                                                       @"itemsValues":@[@"published", @"draft", @"queue", @"private"],
-                                                                       @"static":[NSNumber numberWithBool:YES],
-                                                                       @"allowMultiple":[NSNumber numberWithBool:NO]} mutableCopy] autorelease]
-                                            optionDetailLabelDefault:nil];
-
+    SHKFormFieldOptionPickerSettings *publishField = [SHKFormFieldOptionPickerSettings label:SHKLocalizedString(@"Publish")
+                                                                                         key:@"publish"
+                                                                                       start:SHKLocalizedString(@"Publish now")
+                                                                                 pickerTitle:SHKLocalizedString(@"Publish type")
+                                                                             selectedIndexes:[[NSMutableIndexSet alloc] initWithIndex:0]
+                                                                               displayValues:@[SHKLocalizedString(@"Publish now"), SHKLocalizedString(@"Draft"),
+                                                      SHKLocalizedString(@"Add to queue"), SHKLocalizedString(@"Private")]
+                                                                                  saveValues:@[@"published", @"draft", @"queue", @"private"]
+                                                                               allowMultiple:NO
+                                                                                fetchFromWeb:NO
+                                                                                    provider:nil];
     NSMutableArray *result = nil;
     switch (type) {
         case SHKShareTypeText:
@@ -211,18 +220,18 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
 		return NO;
 	
     OAMutableURLRequest *oRequest = nil;
-    NSMutableArray *params = [[@[] mutableCopy] autorelease];
+    NSMutableArray *params = [@[] mutableCopy];
     
     switch (self.item.shareType) {
             
         case SHKShareTypeUserInfo:
         {
             [self setQuiet:YES];
-            oRequest = [[[OAMutableURLRequest alloc] initWithURL:[NSURL URLWithString:@"http://api.tumblr.com/v2/user/info"]
+            oRequest = [[OAMutableURLRequest alloc] initWithURL:[NSURL URLWithString:@"http://api.tumblr.com/v2/user/info"]
                                                                           consumer:consumer // this is a consumer object already made available to us
                                                                              token:accessToken // this is our accessToken already made available to us
                                                                              realm:nil
-                                                                 signatureProvider:signatureProvider] autorelease];
+                                                                 signatureProvider:signatureProvider];
             [oRequest setHTTPMethod:@"GET"];
             [self sendRequest:oRequest];
             return YES;
@@ -236,9 +245,6 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
             OARequestParameter *titleParam = [[OARequestParameter alloc] initWithName:@"title" value:self.item.title];
             OARequestParameter *bodyParam = [[OARequestParameter alloc] initWithName:@"body" value:self.item.text];
             [params addObjectsFromArray:@[typeParam, titleParam, bodyParam]];
-            [typeParam release];
-            [titleParam release];
-            [bodyParam release];
             break;
         }
         case SHKShareTypeURL:
@@ -252,9 +258,6 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
                     OARequestParameter *titleParam = [[OARequestParameter alloc] initWithName:@"caption" value:self.item.title];
                     OARequestParameter *urlParam = [[OARequestParameter alloc] initWithName:@"embed" value:[self.item.URL absoluteString]];
                     [params addObjectsFromArray:@[typeParam, titleParam, urlParam]];
-                    [typeParam release];
-                    [titleParam release];
-                    [urlParam release];
                     break;
                 }
                 case SHKURLContentTypeAudio:
@@ -263,9 +266,6 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
                     OARequestParameter *titleParam = [[OARequestParameter alloc] initWithName:@"caption" value:self.item.title];
                     OARequestParameter *urlParam = [[OARequestParameter alloc] initWithName:@"external_url" value:[self.item.URL absoluteString]];
                     [params addObjectsFromArray:@[typeParam, titleParam, urlParam]];
-                    [typeParam release];
-                    [titleParam release];
-                    [urlParam release];
                     break;
                 }
                 case SHKURLContentTypeImage:
@@ -274,9 +274,6 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
                     OARequestParameter *titleParam = [[OARequestParameter alloc] initWithName:@"caption" value:self.item.title];
                     OARequestParameter *urlParam = [[OARequestParameter alloc] initWithName:@"source" value:[self.item.URL absoluteString]];
                     [params addObjectsFromArray:@[typeParam, titleParam, urlParam]];
-                    [typeParam release];
-                    [titleParam release];
-                    [urlParam release];
                     break;
                 }
                 default:
@@ -285,14 +282,10 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
                     OARequestParameter *titleParam = [[OARequestParameter alloc] initWithName:@"title" value:self.item.title];
                     OARequestParameter *urlParam = [[OARequestParameter alloc] initWithName:@"url" value:[self.item.URL absoluteString]];
                     [params addObjectsFromArray:@[typeParam, titleParam, urlParam]];
-                    [typeParam release];
-                    [titleParam release];
-                    [urlParam release];
                     
                     if (self.item.text) {
                         OARequestParameter *descriptionParam = [[OARequestParameter alloc] initWithName:@"description" value:self.item.text];
                         [params addObject:descriptionParam];
-                        [descriptionParam release];
                     }
                     break;
                 }
@@ -305,11 +298,11 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
             oRequest = [self setupPostRequest];
             
             NSString *typeValue = nil;
-            if (self.item.image||[self.item.mimeType hasPrefix:@"image/"]) {
+            if (self.item.image||[self.item.file.mimeType hasPrefix:@"image/"]) {
                 typeValue = @"photo";
-            } else if ([self.item.mimeType hasPrefix:@"video/"]) {
+            } else if ([self.item.file.mimeType hasPrefix:@"video/"]) {
                 typeValue = @"video";
-            } else if ([self.item.mimeType hasPrefix:@"audio/"]) {
+            } else if ([self.item.file.mimeType hasPrefix:@"audio/"]) {
                 typeValue = @"audio";
             }
             OARequestParameter *typeParam = [[OARequestParameter alloc] initWithName:@"type" value:typeValue];
@@ -317,8 +310,6 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
             
             //Setup the request...
             [params addObjectsFromArray:@[typeParam, captionParam]];
-            [typeParam release];
-            [captionParam release];
             
             break;
         }
@@ -332,11 +323,9 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
     OARequestParameter *tagsParam = [[OARequestParameter alloc] initWithName:@"tags" value:tags];
     OARequestParameter *publishParam = [[OARequestParameter alloc] initWithName:@"state" value:[self.item customValueForKey:@"publish"]];
     [params addObjectsFromArray:@[tagsParam, publishParam]];
-    [tagsParam release];
-    [publishParam release];
     [oRequest setParameters:params];
     
-    BOOL hasDataContent = self.item.image || self.item.data;
+    BOOL hasDataContent = self.item.image || self.item.file.data;
     if (hasDataContent) {
         
         //media have to be sent as data. Prepare method makes OAuth signature prior appending the multipart/form-data 
@@ -346,11 +335,11 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
         if (self.item.image) {
             imageData = UIImageJPEGRepresentation(self.item.image, 0.9);
         } else {
-            imageData = self.item.data;
+            imageData = self.item.file.data;
         }
         
         //append multipart/form-data
-        [oRequest attachFileWithParameterName:@"data" filename:self.item.filename contentType:self.item.mimeType data:imageData];
+        [oRequest attachFileWithParameterName:@"data" filename:self.item.file.filename contentType:self.item.file.mimeType data:imageData];
     }
     
     [self sendRequest:oRequest];
@@ -364,12 +353,11 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
 - (OAMutableURLRequest *)setupPostRequest {
     
     NSString *urlString = [[NSString alloc] initWithFormat:@"http://api.tumblr.com/v2/blog/%@/post", [self.item customValueForKey:@"blog"]];
-    OAMutableURLRequest *result = [[[OAMutableURLRequest alloc] initWithURL:[NSURL URLWithString:urlString]
+    OAMutableURLRequest *result = [[OAMutableURLRequest alloc] initWithURL:[NSURL URLWithString:urlString]
                                                consumer:consumer // this is a consumer object already made available to us
                                                   token:accessToken // this is our accessToken already made available to us
                                                   realm:nil
-                                      signatureProvider:signatureProvider] autorelease];
-    [urlString release];
+                                      signatureProvider:signatureProvider];
     [result setHTTPMethod:@"POST"];
     return result;
 }
@@ -419,7 +407,7 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
             
         } else {
             
-            SHKLog(@"Tumblr send finished with error:%@", [[[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding] autorelease]);
+            SHKLog(@"Tumblr send finished with error:%@", [[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding]);
             [self sendShowSimpleErrorAlert];
         }
 
@@ -438,15 +426,19 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
     NSAssert(self.curOptionController == nil, @"there should never be more than one picker open.");
 	self.curOptionController = optionController;
     
+    [self displayActivity:SHKLocalizedString(@"Loading...")];
+    
     SHKTumblr *infoSharer = [SHKTumblr getUserInfo];
     
-    __block SHKTumblr *weakSelf = self;
+    __weak SHKTumblr *weakSelf = self;
     self.getUserBlogsObserver = [[NSNotificationCenter defaultCenter] addObserverForName:SHKSendDidFinishNotification
                                                       object:infoSharer
                                                        queue:[NSOperationQueue mainQueue]
                                                   usingBlock:^(NSNotification *notification) {
                                                       
-                                                      NSArray *userBlogURLs = [self userBlogURLs];
+                                                      [weakSelf hideActivityIndicator];
+                                                      
+                                                      NSArray *userBlogURLs = [weakSelf userBlogURLs];
                                                       [weakSelf blogsEnumerated:userBlogURLs];
                                                       
                                                       [[NSNotificationCenter defaultCenter] removeObserver:weakSelf.getUserBlogsObserver];
@@ -456,10 +448,10 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
 
 - (void)SHKFormOptionControllerCancelEnumerateOptions:(SHKFormOptionController *)optionController
 {
-	[[NSNotificationCenter defaultCenter] removeObserver:self.getUserBlogsObserver];
+    [self hideActivityIndicator];
+    [[NSNotificationCenter defaultCenter] removeObserver:self.getUserBlogsObserver];
     self.getUserBlogsObserver = nil;
     NSAssert(self.curOptionController == optionController, @"there should never be more than one picker open.");
-	self.curOptionController = nil;
 }
 
 #pragma mark - 
@@ -467,15 +459,14 @@ NSString * const kSHKTumblrUserInfo = @"kSHKTumblrUserInfo";
 - (void)blogsEnumerated:(NSArray *)blogs{
     
 	NSAssert(self.curOptionController != nil, @"Any pending requests should have been canceled in SHKFormOptionControllerCancelEnumerateOptions");
-	[self.curOptionController optionsEnumerated:blogs];
-	self.curOptionController = nil;
+	[self.curOptionController optionsEnumeratedDisplay:blogs save:nil];
 }
 
 - (NSArray *)userBlogURLs {
     
     NSDictionary *userInfo = [[NSUserDefaults standardUserDefaults] objectForKey:kSHKTumblrUserInfo];
     NSArray *usersBlogs = [[[userInfo objectForKey:@"response"] objectForKey:@"user"] objectForKey:@"blogs"];
-    NSMutableArray *result = [[@[] mutableCopy] autorelease];
+    NSMutableArray *result = [@[] mutableCopy];
     for (NSDictionary *blog in usersBlogs) {
         NSURL *blogURL = [NSURL URLWithString:[blog objectForKey:@"url"]];
         [result addObject:blogURL.host];

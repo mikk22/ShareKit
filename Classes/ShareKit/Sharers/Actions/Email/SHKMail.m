@@ -25,8 +25,10 @@
 //
 //
 
-#import "SHKConfiguration.h"
 #import "SHKMail.h"
+#import "SharersCommonHeaders.h"
+
+#define MAX_ATTACHMENT_SIZE 10*1024*1024 //10mb
 
 @implementation SHKMail
 
@@ -53,9 +55,21 @@
 	return YES;
 }
 
-+ (BOOL)canShareFileOfMimeType:(NSString *)mimeType size:(NSUInteger)size
++ (BOOL)canShareVideo
 {
-	return YES;
+    return YES;
+}
+
++ (BOOL)canShareFile:(SHKFile *)file {
+    
+    /*
+     * Limiting to 10MB, based on common max attachment sizes listed here:
+     * http://en.wikipedia.org/wiki/Email_attachment
+     * http://help.sizablesend.com/what-are-the-attachment-size-limits-of-major-email-providers/
+     */
+    
+    BOOL result = file.size <= MAX_ATTACHMENT_SIZE;
+    return result;
 }
 
 + (BOOL)shareRequiresInternetConnection
@@ -82,8 +96,6 @@
 	return YES;
 }
 
-
-
 #pragma mark -
 #pragma mark Share API Methods
 
@@ -99,44 +111,42 @@
 
 - (BOOL)sendMail
 {	
-	MFMailComposeViewController *mailController = [[[MFMailComposeViewController alloc] init] autorelease];
+	MFMailComposeViewController *mailController = [[MFMailComposeViewController alloc] init];
 	if (!mailController) {
 		// e.g. no mail account registered (will show alert)
 		[[SHK currentHelper] hideCurrentViewControllerAnimated:YES];
 		return YES;
 	}
 	
-    [self retain]; //must retain, because mailController does not retain its delegates. Released in callback.
+    [[SHK currentHelper] keepSharerReference:self]; //must retain, because mailController does not retain its delegates. Released in callback.
 	mailController.mailComposeDelegate = self;
 	mailController.navigationBar.tintColor = SHKCONFIG_WITH_ARGUMENT(barTintForView:,mailController);
 	
-	NSString *body = self.item.text;
+	NSString *body = self.item.text ? self.item.text : @"";
 	BOOL isHTML = self.item.isMailHTML;
-	NSString *separator = (isHTML ? @"<br/><br/>" : @"\n\n");
-    
-	if (body == nil)
-	{
-		body = @"";
+    NSString *separator = (isHTML ? @"<br/><br/>" : @"\n\n");
 		
 		if (self.item.URL != nil)
 		{
 			NSString *urlStr = [self.item.URL.absoluteString stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
 			
-			if (isHTML)
-				body = [body stringByAppendingFormat:@"%@%@", separator, urlStr];
-			else
-				body = urlStr;
+            if ([body length] > 0) {
+                body = [body stringByAppendingFormat:@"%@%@", separator, urlStr];
+            } else {
+                body = [body stringByAppendingFormat:@"%@", urlStr];
+            }
 		}
 		
-		if (self.item.data)
+		if (self.item.file)
 		{
-			NSString *attachedStr = SHKLocalizedString(@"Attached: %@", self.item.title ? self.item.title : self.item.filename);
+			NSString *attachedStr = SHKLocalizedString(@"Attached: %@", self.item.title ? self.item.title : self.item.file.filename);
 			
-			if (isHTML)
-				body = [body stringByAppendingFormat:@"%@%@", separator, attachedStr];
-			else
-				body = attachedStr;
-		}
+            if ([body length] > 0) {
+                body = [body stringByAppendingFormat:@"%@%@", separator, attachedStr];
+            } else {
+                body = [body stringByAppendingFormat:@"%@", attachedStr];
+            }
+            		}
 		
 		// fallback
 		if (body == nil)
@@ -148,10 +158,9 @@
 			body = [body stringByAppendingString:separator];
 			body = [body stringByAppendingString:SHKLocalizedString(@"Sent from %@", SHKCONFIG(appName))];
 		}
-	}
 	
-	if (self.item.data)		
-		[mailController addAttachmentData:self.item.data mimeType:self.item.mimeType fileName:self.item.filename];
+	if (self.item.file)
+		[mailController addAttachmentData:self.item.file.data mimeType:self.item.file.mimeType fileName:self.item.file.filename];
 	
 	NSArray *toRecipients = self.item.mailToRecipients;
     if (toRecipients)
@@ -190,8 +199,7 @@
 			[self sendDidFailWithError:nil];
 			break;
 	}
-	[self autorelease];
+	[[SHK currentHelper] removeSharerReference:self];
 }
-
 
 @end

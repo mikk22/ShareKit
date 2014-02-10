@@ -26,7 +26,7 @@
 //
 
 #import "SHKLogout.h"
-
+#import "SharersCommonHeaders.h"
 
 @implementation SHKLogout
 
@@ -55,7 +55,7 @@
 	return YES;
 }
 
-+ (BOOL)canShareFileOfMimeType:(NSString *)mimeType size:(NSUInteger)size
++ (BOOL)canShareFile:(SHKFile *)file
 {
 	return YES;
 }
@@ -87,7 +87,7 @@
 	[SHK logoutOfAll];
 	
 	// Notify user
-	[[SHKActivityIndicator currentIndicator] displayCompleted:SHKLocalizedString(@"Logged Out!")];
+	[self displayCompleted:SHKLocalizedString(@"Logged Out!")];
 	
 	// Notify delegate, but quietly
 	self.quiet = YES;

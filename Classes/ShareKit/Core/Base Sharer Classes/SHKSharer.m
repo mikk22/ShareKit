@@ -26,9 +26,11 @@
 //
 
 #import "SHKSharer.h"
-#import "SHKActivityIndicator.h"
-#import "SHKConfiguration.h"
+
 #import "SHKSharerDelegate.h"
+#import "SHKRequest.h"
+#import "SharersCommonHeaders.h"
+#import "SHKUploadInfo.h"
 
 static NSString *const kSHKStoredItemKey=@"kSHKStoredItem";
 static NSString *const kSHKStoredActionKey=@"kSHKStoredAction";
@@ -42,17 +44,10 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 
 @implementation SHKSharer
 
-- (void)dealloc
-{
-	[_item release];
-    [_shareDelegate release];
-	[_pendingForm release];
-	[_request release];
-	[_lastError release];
-	
-	[super dealloc];
+- (void)dealloc {
+    
+    SHKLog(@"!!! %@ sharer deallocated!!!", [self sharerTitle]);
 }
-
 
 #pragma mark -
 #pragma mark Configuration : Service Defination
@@ -100,7 +95,7 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 	return NO;
 }
 
-+ (BOOL)canShareFileOfMimeType:(NSString *)mimeType size:(NSUInteger)size
++ (BOOL)canShareFile:(SHKFile *)file;
 {
 	return NO;
 }
@@ -139,7 +134,7 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 			return [self canShareText];
 			
 		case SHKShareTypeFile:
-			return [self canShareFileOfMimeType:item.mimeType size:[item.data length]];
+			return [self canShareFile:item.file];
             
         case SHKShareTypeUserInfo:
 			return [self canGetUserInfo];
@@ -179,7 +174,7 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 {
 	if (self = [super initWithNibName:nil bundle:nil])
 	{
-		self.shareDelegate = [[[SHKSharerDelegate alloc] init] autorelease];
+        _shareDelegate = [[SHKSharerDelegate alloc] init];
 				
 		if ([self respondsToSelector:@selector(modalPresentationStyle)])
 			self.modalPresentationStyle = [SHK modalPresentationStyleForController:self];
@@ -190,30 +185,42 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 	return self;
 }
 
-
 #pragma mark -
 #pragma mark Share Item Loading Convenience Methods
 
 + (id)shareItem:(SHKItem *)i
 {
-	[SHK pushOnFavorites:[self sharerId] forItem:i];
-	
-	// Create controller and set share options
-	SHKSharer *controller = [[self alloc] init];
-	controller.item = i;
-	
-	// share and/or show UI
-	[controller share];
-	
-	return [controller autorelease];
+	if ([self canShareItem:i]) {
+        
+        [SHK pushOnFavorites:[self sharerId] forItem:i];
+        
+        // Create controller and set share options
+        SHKSharer *controller = [[self alloc] init];
+        controller.item = i;
+        
+        // share and/or show UI
+        [controller share];
+        
+        return controller;
+        
+    } else {
+        
+        SHKLog(@"Warning!!! You are loading sharer with incompatible item");
+        return nil;
+    }
 }
 
 - (void)loadItem:(SHKItem *)i
 {
-	[SHK pushOnFavorites:[self sharerId] forItem:i];
-	
-	// Create controller set share options
-	self.item = i;
+    if ([[self class] canShareItem:i]) {
+        
+        [SHK pushOnFavorites:[self sharerId] forItem:i];
+        self.item = i;
+        
+    } else {
+        
+        SHKLog(@"Warning!!! You are loading sharer with incompatible item");
+    }
 }
 
 + (id)shareURL:(NSURL *)url
@@ -232,7 +239,7 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 	// share and/or show UI
 	[controller share];
 
-	return [controller autorelease];
+	return controller;
 }
 
 + (id)shareImage:(UIImage *)image title:(NSString *)title
@@ -246,7 +253,7 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 	// share and/or show UI
 	[controller share];
 	
-	return [controller autorelease];
+	return controller;
 }
 
 + (id)shareText:(NSString *)text
@@ -259,12 +266,17 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 	// share and/or show UI
 	[controller share];
 	
-	return [controller autorelease];
+	return controller;
 }
 
 + (id)shareFile:(NSData *)file filename:(NSString *)filename mimeType:(NSString *)mimeType title:(NSString *)title
 {
-	SHKItem *item = [SHKItem file:file filename:filename mimeType:mimeType title:title];
+    return [[self class] shareFileData:file filename:filename title:title];
+}
+
++ (id)shareFileData:(NSData *)data filename:(NSString *)filename title:(NSString *)title
+{
+    SHKItem *item = [SHKItem fileData:data filename:filename title:title];
     
     // Create controller and set share options
 	SHKSharer *controller = [[self alloc] init];
@@ -273,7 +285,21 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 	// share and/or show UI
 	[controller share];
 	
-	return [controller autorelease];
+	return controller;
+}
+
++ (id)shareFilePath:(NSString *)path title:(NSString *)title
+{
+    SHKItem *item = [SHKItem filePath:path title:title];
+    
+    // Create controller and set share options
+	SHKSharer *controller = [[self alloc] init];
+    [controller loadItem:item];
+	
+	// share and/or show UI
+	[controller share];
+	
+	return controller;
 }
 
 + (id)getUserInfo
@@ -281,27 +307,33 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
     SHKItem *item = [[SHKItem alloc] init];
     item.shareType = SHKShareTypeUserInfo;
     
-    // Create controller and set share options
-	SHKSharer *controller = [[self alloc] init];
-	controller.item = item;
-    [item release];
-    
-	// share and/or show UI
-	[controller share];
-    
-    return [controller autorelease];
+    if ([self canShareItem:item]) {
+        
+        // Create controller and set share options
+        SHKSharer *controller = [[self alloc] init];
+        controller.item = item;
+        
+        // share and/or show UI
+        [controller share];
+        return controller;
+
+    } else {
+        
+        SHKLog(@"Warning!!! This sharer does not fetch user info.");
+        return nil;
+    }
 }
 
 #pragma mark - Share Item temporary save
 
-- (BOOL)restoreItem{
+- (BOOL)restoreItem {
     
 	NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
 	NSDictionary *storedShareInfo = [defaults objectForKey:kSHKStoredShareInfoKey];
     
 	if (storedShareInfo)
 	{
-		self.item = [SHKItem itemFromDictionary:[storedShareInfo objectForKey:kSHKStoredItemKey]];
+        self.item = [NSKeyedUnarchiver unarchiveObjectWithData:[storedShareInfo objectForKey:kSHKStoredItemKey]];
 		self.pendingAction = [[storedShareInfo objectForKey:kSHKStoredActionKey] intValue];
         [[self class] clearSavedItem];
     }
@@ -317,8 +349,10 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 
 - (void)saveItemForLater:(SHKSharerPendingAction)inPendingAction {
     
-	NSDictionary *itemRep = [self.item dictionaryRepresentation];
-    NSDictionary *shareInfo = @{kSHKStoredItemKey: itemRep,
+    if (!self.item) return;
+    
+    NSData *itemData = [NSKeyedArchiver archivedDataWithRootObject:self.item];
+    NSDictionary *shareInfo = @{kSHKStoredItemKey: itemData,
                                kSHKStoredActionKey : [NSNumber numberWithInt:inPendingAction]};
     
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -340,39 +374,40 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
         return;
     }
 	
-	if (!self.quiet) [[SHKActivityIndicator currentIndicator] displayActivity:SHKLocalizedString(@"Shortening URL...")];
-	
-	self.request = [[[SHKRequest alloc] initWithURL:[NSURL URLWithString:[NSMutableString stringWithFormat:@"http://api.bit.ly/v3/shorten?login=%@&apikey=%@&longUrl=%@&format=txt",
-																		  bitLyLogin,
-																		  bitLyKey,
-																		  SHKEncodeURL(self.item.URL)
-																		  ]]
-											 params:nil
-										   delegate:self
-								 isFinishedSelector:@selector(shortenURLFinished:)
-											 method:@"GET"
-										  autostart:YES] autorelease];
-}
-
-- (void)shortenURLFinished:(SHKRequest *)aRequest
-{
-	[[SHKActivityIndicator currentIndicator] hide];
-	
-	NSString *result = [[aRequest getResult] stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-	
-	if (!aRequest.success || result == nil || [NSURL URLWithString:result] == nil)
-	{
-		SHKLog(@"URL was not shortened! Error response:%@", result);
-	}
-	else
-	{
-        //if really shortened, set new URL
-		if (![result isEqualToString:@"ALREADY_A_BITLY_LINK"]) {
-            NSURL *newURL = [NSURL URLWithString:result];
-            self.item.URL = newURL;
-        }
-	}
-    [self show];
+	[self displayActivity:SHKLocalizedString(@"Shortening URL...")];
+    
+	[SHKRequest startWithURL:[NSURL URLWithString:[NSMutableString stringWithFormat:@"http://api.bit.ly/v3/shorten?login=%@&apikey=%@&longUrl=%@&format=txt",
+                                                   bitLyLogin,
+                                                   bitLyKey,
+                                                   SHKEncodeURL(self.item.URL)
+                                                   ]]
+                      params:nil
+                      method:@"GET"
+                  completion:^(SHKRequest *request) {
+                      
+                      [self hideActivityIndicator];
+                      
+                      NSString *result = [[request getResult] stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+                      
+                      if (!request.success || result == nil || [NSURL URLWithString:result] == nil)
+                      {
+                          SHKLog(@"URL was not shortened! Error response:%@", result);
+                      }
+                      else
+                      {
+                          //if really shortened, set new URL
+                          if (![result isEqualToString:@"ALREADY_A_BITLY_LINK"]) {
+                              NSURL *newURL = [NSURL URLWithString:result];
+                              self.item.URL = newURL;
+                          }
+                      }
+                      
+                      if ([self shouldShareSilently]) {
+                          [self tryToSend];
+                      } else {
+                          [self show];
+                      }
+                  }];
 }
 
 #pragma mark -
@@ -380,25 +415,46 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 
 - (void)share
 {
-	// isAuthorized - If service requires login and details have not been saved, present login dialog	
-	if (![self authorize])
-		self.pendingAction = SHKPendingShare;
-
-	// A. First check if auto share is set and isn't nobbled off	
-	// B. If it is, try to send
-	// If either A or B fail, display the UI
-    
-    //TODO make this more readable and fix tryToSend failback
-	else if ([SHKCONFIG(allowAutoShare) boolValue] == FALSE ||	// this calls show and would skip try to send... but for sharers with no UI, try to send gets called in show
-			 ![self shouldAutoShare] || 
-			 ![self tryToSend]) {
+	// isAuthorized - If service requires login and details have not been saved, present login dialog
+	if (![self authorize]) {
         
-        if (self.item.URL && [self requiresShortenedURL]) {
-            [self shortenURL];
-        } else {
-            [self show];
-        }        
+		self.pendingAction = SHKPendingShare;
+        return;
     }
+    
+    BOOL isSharerReady = [self isSharerReady];
+    if (!isSharerReady) {
+        return;
+    }
+    
+    BOOL shouldShortenURL = self.item.URL && [self requiresShortenedURL];
+    if (shouldShortenURL) {
+        [self shortenURL];
+        return;
+    }
+    
+    if ([self shouldShareSilently]) {
+        [self tryToSend];
+    } else {
+        [self show];
+    }
+}
+
+//insertion point for sharers, which must have fulfilled more conditions for sharing, e.g. available user account in settings.app for iOS sharers. Evaluated within share method, before actually sharing.
+- (BOOL)isSharerReady {
+    
+    return YES;
+}
+
+- (BOOL)shouldShareSilently {
+    
+    BOOL result = [SHKCONFIG(allowAutoShare) boolValue] == TRUE && [self shouldAutoShare];
+    return result;
+}
+
+- (void)cancel {
+    
+    SHKLog(@"Default implementation of cancel does nothing!!!");
 }
 
 #pragma mark -
@@ -440,11 +496,11 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 	{
 		if (!self.quiet)
 		{
-			[[[[UIAlertView alloc] initWithTitle:SHKLocalizedString(@"Offline")
+			[[[UIAlertView alloc] initWithTitle:SHKLocalizedString(@"Offline")
 										 message:SHKLocalizedString(@"You must be online to login to %@", [self sharerTitle])
 										delegate:nil
 							   cancelButtonTitle:SHKLocalizedString(@"Close")
-							   otherButtonTitles:nil] autorelease] show];
+							   otherButtonTitles:nil] show];
 		}
 		return;
 	}
@@ -469,60 +525,74 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 	// Create the form
 	SHKFormController *form = [[SHKCONFIG(SHKFormControllerSubclass) alloc] initWithStyle:UITableViewStyleGrouped title:SHKLocalizedString(@"Login") rightButtonTitle:SHKLocalizedString(@"Login")];
 	[form addSection:[self authorizationFormFields] header:nil footer:[self authorizationFormCaption]];
-	form.delegate = self;
-	form.validateSelector = @selector(authorizationFormValidate:);
-	form.saveSelector = @selector(authorizationFormSave:);
-	form.cancelSelector = @selector(authorizationFormCancel:);
+
+    form.validateBlock = [self authorizationFormValidate];
+	form.saveBlock = [self authorizationFormSave];
+	form.cancelBlock = [self authorizationFormCancel];
 	form.autoSelect = YES;
 	
     [self pushViewController:form animated:NO];
-    [form release];
     
 	[[SHK currentHelper] showViewController:self];
 }
 
-- (void)authorizationFormValidate:(SHKFormController *)form
+- (FormControllerCallback)authorizationFormValidate;
 {
-	/*
-	 
-	Services should subclass this.
-	You can get a dictionary of the field values from [form formValues]
-	 
-	--
-	 
-	You should perform one of the following actions:
-	 
-	1.	Display an error - If the user input was incorrect, display an error to the user and tell them what to do to fix it
-	 
-	2.	Save the form - If everything is correct call [form saveForm]
-	 
-	3.	Display a pending indicator - If you need to authorize the details on the server, display an activity indicator with [form displayActivity:@"DESCRIPTION OF WHAT YOU ARE DOING"]
-		After your process completes be sure to perform either 1 or 2 above.
+	FormControllerCallback result = ^(SHKFormController *form){
+        
+        /*
+         
+         Services should subclass this.
+         You can get a dictionary of the field values from [form formValues]
+         
+         --
+         
+         You should perform one of the following actions:
+         
+         1.	Display an error - If the user input was incorrect, display an error to the user and tell them what to do to fix it
+         
+         2.	Save the form - If everything is correct call [form saveForm]
+         
+         3.	Display a pending indicator - If you need to authorize the details on the server, display an activity indicator with [form displayActivity:@"DESCRIPTION OF WHAT YOU ARE DOING"]
+         After your process completes be sure to perform either 1 or 2 above.
 	 	 
-	*/
+         */
+        
+    };
+    return result;
 }
 
-- (void)authorizationFormSave:(SHKFormController *)form
+- (FormControllerCallback)authorizationFormSave;
 {		
-	// -- Save values 
-	NSDictionary *formValues = [form formValues];
-	
-	NSString *value;
-	NSString *sharerId = [self sharerId];
-	NSArray *fields = [[[form sections] objectAtIndex:0] objectForKey:@"rows"];
-	for(SHKFormFieldSettings *field in fields)
-	{
-		value = [formValues objectForKey:field.key];
-		[SHK setAuthValue:value forKey:field.key forSharer:sharerId];
-	}	
+    __weak typeof(self) weakSelf = self;
+    FormControllerCallback result = ^(SHKFormController *form) {
+        
+        // -- Save values
+        NSDictionary *formValues = [form formValues];
+        
+        NSString *value;
+        NSString *sharerId = [weakSelf sharerId];
+        NSArray *fields = [[[form sections] objectAtIndex:0] objectForKey:@"rows"];
+        for(SHKFormFieldSettings *field in fields)
+        {
+            value = [formValues objectForKey:field.key];
+            [SHK setAuthValue:value forKey:field.key forSharer:sharerId];
+        }	
 		
-	// -- Try to share again
-	[self tryPendingAction];
+        // -- Try to share again
+        [weakSelf tryPendingAction];
+    };
+    return result;
 }
 
-- (void)authorizationFormCancel:(SHKFormController *)form
+- (FormControllerCallback)authorizationFormCancel;
 {
-	[self sendDidCancel];
+	__weak typeof(self) weakSelf = self;
+    FormControllerCallback result = ^(SHKFormController *form) {
+        
+        [weakSelf sendDidCancel];
+    };
+    return result;
 }
 
 - (NSArray *)authorizationFormFields
@@ -559,18 +629,20 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 	}	
 }
 
++ (NSString *)username {
+    
+    NSString *result = [SHK getAuthValueForKey:@"username" forSharer:[self sharerId]];
+    return result;
+}
+
 // Credit: GreatWiz
 + (BOOL)isServiceAuthorized 
 {	
 	SHKSharer *controller = [[self alloc] init];
 	BOOL isAuthorized = [controller isAuthorized];
-	[controller release];
 	
 	return isAuthorized;	
 }
-
-
-
 
 #pragma mark -
 #pragma mark UI Implementation
@@ -588,28 +660,32 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 																		 title:nil
 															  rightButtonTitle:SHKLocalizedString(@"Send to %@", [[self class] sharerTitle])
 									   ];
-		[rootView addSection:shareFormFields header:nil footer:self.item.URL!=nil?self.item.URL.absoluteString:nil];
-		
-		if ([SHKCONFIG(allowAutoShare) boolValue] == TRUE && [[self class] canAutoShare])
-		{
-			[rootView addSection:
-			[NSArray arrayWithObject:
-			[SHKFormFieldSettings label:SHKLocalizedString(@"Auto Share") key:@"autoShare" type:SHKFormFieldTypeSwitch start:([self shouldAutoShare]?SHKFormFieldSwitchOn:SHKFormFieldSwitchOff)]
-			 ]
-						header:nil
-						footer:SHKLocalizedString(@"Enable auto share to skip this step in the future.")];
-		}
-		
-		rootView.delegate = self;
-		rootView.validateSelector = @selector(shareFormValidate:);
-		rootView.saveSelector = @selector(shareFormSave:);
-		rootView.cancelSelector = @selector(shareFormCancel:);
-		
+        
+        [self setupFormController:rootView withFields:shareFormFields];
+				
 		[self pushViewController:rootView animated:NO];
-        [rootView release];
 		
 		[[SHK currentHelper] showViewController:self];
 	}
+}
+
+- (void)setupFormController:(SHKFormController *)rootView withFields:(NSArray *)shareFormFields {
+    
+    [rootView addSection:shareFormFields header:nil footer:self.item.URL!=nil?self.item.URL.absoluteString:nil];
+    
+    if ([SHKCONFIG(allowAutoShare) boolValue] == TRUE && [[self class] canAutoShare])
+    {
+        [rootView addSection:
+         [NSArray arrayWithObject:
+          [SHKFormFieldSettings label:SHKLocalizedString(@"Auto Share") key:@"autoShare" type:SHKFormFieldTypeSwitch start:([self shouldAutoShare]?SHKFormFieldSwitchOn:SHKFormFieldSwitchOff)]
+          ]
+                      header:nil
+                      footer:SHKLocalizedString(@"Enable auto share to skip this step in the future.")];
+    }
+    
+    rootView.validateBlock = [self shareFormValidate];
+    rootView.saveBlock = [self shareFormSave];
+    rootView.cancelBlock = [self shareFormCancel];
 }
 
 #pragma mark -
@@ -617,58 +693,74 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 
 - (NSArray *)shareFormFieldsForType:(SHKShareType)type
 {
-	if (type == SHKShareTypeURL)
-		return [NSArray arrayWithObjects:
-				[SHKFormFieldSettings label:SHKLocalizedString(@"Title") key:@"title" type:SHKFormFieldTypeText start:self.item.title],
-				nil];
-	
-	return nil;
+	//this is abstract method. Services which do not present their own UI should override this to present SHKFormController e.g like this
+    
+    /*	if (type == SHKShareTypeURL)
+     return [NSArray arrayWithObjects:
+     [SHKFormFieldSettings label:SHKLocalizedString(@"Title") key:@"title" type:SHKFormFieldTypeText start:self.item.title],
+     nil];*/
+    
+    return nil;
 }
 
-- (void)shareFormValidate:(SHKFormController *)form
+- (FormControllerCallback)shareFormValidate
 {	
-	/*
-	 
-	 Services should subclass this if they need to validate any data before sending.
-	 You can get a dictionary of the field values from [form formValues]
-	 
-	 --
-	 
-	 You should perform one of the following actions:
-	 
-	 1.	Display an error - If the user input was incorrect, display an error to the user and tell them what to do to fix it
-	 
-	 2.	Save the form - If everything is correct call [form save]
-	 
-	 3.	Display a pending indicator - If you need to authorize the details on the server, display an activity indicator with [form displayActivity:@"DESCRIPTION OF WHAT YOU ARE DOING"]
-	 After your process completes be sure to perform either 1 or 2 above.
-	 
-	*/
-	
-	
-	// default does no checking and proceeds to share
-	[form saveForm];
+    FormControllerCallback result = ^(SHKFormController *form) {
+        
+        /*
+         
+         Services should subclass this if they need to validate any data before sending.
+         You can get a dictionary of the field values from [form formValues]
+         
+         --
+         
+         You should perform one of the following actions:
+         
+         1.	Display an error - If the user input was incorrect, display an error to the user and tell them what to do to fix it
+         
+         2.	Save the form - If everything is correct call [form save]
+         
+         3.	Display a pending indicator - If you need to authorize the details on the server, display an activity indicator with [form displayActivity:@"DESCRIPTION OF WHAT YOU ARE DOING"]
+         After your process completes be sure to perform either 1 or 2 above.
+         
+         */
+        
+        
+        // default does no checking and proceeds to share
+        [form saveForm];
+    };
+    return result;
 }
 
-- (void)shareFormSave:(SHKFormController *)form
+- (FormControllerCallback)shareFormSave
 {		
-    [self updateItemWithForm:form];
-	
-	// Update shouldAutoShare
-	if ([SHKCONFIG(allowAutoShare) boolValue] == TRUE && [[self class] canAutoShare])
-	{
-		NSDictionary *advancedOptions = [form formValuesForSection:1];
-		if ([advancedOptions objectForKey:@"autoShare"] != nil)
-			[self setShouldAutoShare:[[advancedOptions objectForKey:@"autoShare"] isEqualToString:SHKFormFieldSwitchOn]];	
-	}
-	
-	// Send the share
-	[self tryToSend];
+    __weak typeof(self) weakSelf = self;
+    FormControllerCallback result = ^(SHKFormController *form) {
+        
+        [weakSelf updateItemWithForm:form];
+        
+        // Update shouldAutoShare
+        if ([SHKCONFIG(allowAutoShare) boolValue] == TRUE && [[weakSelf class] canAutoShare])
+        {
+            NSDictionary *advancedOptions = [form formValuesForSection:1];
+            if ([advancedOptions objectForKey:@"autoShare"] != nil)
+                [weakSelf setShouldAutoShare:[[advancedOptions objectForKey:@"autoShare"] isEqualToString:SHKFormFieldSwitchOn]];
+        }
+        
+        // Send the share
+        [weakSelf tryToSend];
+    };
+    return result;
 }
 
-- (void)shareFormCancel:(SHKFormController *)form
+- (FormControllerCallback)shareFormCancel
 {
-	[self sendDidCancel];
+	__weak typeof(self) weakSelf = self;
+    FormControllerCallback result = ^(SHKFormController *form) {
+        
+        [weakSelf sendDidCancel];
+    };
+    return result;
 }
 
 #pragma mark -
@@ -752,13 +844,10 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 			return (self.item.text != nil);
 			
 		case SHKShareTypeFile:
-			return (self.item.data != nil);
+			return (self.item.file != nil);
             
         case SHKShareTypeUserInfo:
-        {    
-            BOOL result = [[self class] canGetUserInfo];
-            return result; 
-        }   
+            return [[self class] canGetUserInfo];
 		default:
 			break;
 	}
@@ -776,11 +865,11 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 	
 	else if (!self.quiet)
 	{
-		[[[[UIAlertView alloc] initWithTitle:SHKLocalizedString(@"Offline")
+		[[[UIAlertView alloc] initWithTitle:SHKLocalizedString(@"Offline")
 									 message:SHKLocalizedString(@"You must be online in order to share with %@", [self sharerTitle])
 									delegate:nil
 						   cancelButtonTitle:SHKLocalizedString(@"Close")
-						   otherButtonTitles:nil] autorelease] show];
+						   otherButtonTitles:nil] show];
 		
 		return YES;
 	}
@@ -847,21 +936,29 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 }
 
 - (void)sendDidFinish
-{	
-	[[NSNotificationCenter defaultCenter] postNotificationName:SHKSendDidFinishNotification object:self];
+{
+    [self sendDidFinishWithResponse:nil];
+}
 
+- (void)sendDidFinishWithResponse:(NSDictionary *)response {
+    
+    if (self.uploadInfo) {
+        self.uploadInfo.uploadFinishedSuccessfully = YES;
+        [[SHK currentHelper] uploadInfoChanged:self.uploadInfo];
+    }
+    
+    [[NSNotificationCenter defaultCenter] postNotificationName:SHKSendDidFinishNotification object:self userInfo:response];
+    
     if ([self.shareDelegate respondsToSelector:@selector(sharerFinishedSending:)])
 		[self.shareDelegate performSelector:@selector(sharerFinishedSending:) withObject:self];
-	}
+}
 
 - (void)shouldReloginWithPendingAction:(SHKSharerPendingAction)action
 {
-    
     if (action == SHKPendingShare) {
         
         if (self.curOptionController) {
             [self popViewControllerAnimated:NO];//dismiss option controller
-            self.curOptionController = nil;
             NSAssert([[self topViewController] isKindOfClass:[SHKFormController class]], @"topViewController must be SHKFormController now!");
             [self updateItemWithForm:(SHKFormController *)self.topViewController];
         }        
@@ -879,17 +976,30 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 - (void)sendDidFailWithError:(NSError *)error shouldRelogin:(BOOL)shouldRelogin
 {
 	self.lastError = error;
-	SHKLog(@"%@", [self.request description]);
+    
+    if (self.uploadInfo) {
+        [[SHK currentHelper] uploadInfoChanged:self.uploadInfo];//to save last progress into defaults
+    }
     
 	[[NSNotificationCenter defaultCenter] postNotificationName:SHKSendDidFailWithErrorNotification object:self];
     
 	if ([self.shareDelegate respondsToSelector:@selector(sharer:failedWithError:shouldRelogin:)])
 		[self.shareDelegate sharer:self failedWithError:error shouldRelogin:shouldRelogin];
+    
+    if (shouldRelogin) {
+        [self promptAuthorization];
+	}
 }
 
 - (void)sendDidCancel
 {
-	[[NSNotificationCenter defaultCenter] postNotificationName:SHKSendDidCancelNotification object:self];
+    if (self.uploadInfo) {
+        
+        self.uploadInfo.uploadCancelled = YES;
+        [[SHK currentHelper] uploadInfoChanged:self.uploadInfo];
+    }
+    
+    [[NSNotificationCenter defaultCenter] postNotificationName:SHKSendDidCancelNotification object:self];
     
     if ([self.shareDelegate respondsToSelector:@selector(sharerCancelledSending:)])
 		[self.shareDelegate performSelector:@selector(sharerCancelledSending:) withObject:self];	
@@ -897,7 +1007,8 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 
 - (void)authDidFinish:(BOOL)success	
 {
-	[[NSNotificationCenter defaultCenter] postNotificationName:SHKAuthDidFinishNotification object:self userInfo:[NSDictionary dictionaryWithObject:[NSNumber numberWithBool:success] forKey:@"success"]];
+    
+    [[NSNotificationCenter defaultCenter] postNotificationName:SHKAuthDidFinishNotification object:self userInfo:[NSDictionary dictionaryWithObject:[NSNumber numberWithBool:success] forKey:@"success"]];
     
     if ([self.shareDelegate respondsToSelector:@selector(sharerAuthDidFinish:success:)]) {		
         [self.shareDelegate sharerAuthDidFinish:self success:success];
@@ -906,7 +1017,6 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 
 - (void)authShowBadCredentialsAlert {
     
-    SHKLog(@"%@", [self.request description]);
     if ([self.shareDelegate respondsToSelector:@selector(sharerShowBadCredentialsAlert:)]) {		
         [self.shareDelegate sharerShowBadCredentialsAlert:self];
     }
@@ -914,7 +1024,6 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 
 - (void)authShowOtherAuthorizationErrorAlert {
     
-    SHKLog(@"%@", [self.request description]);
     if ([self.shareDelegate respondsToSelector:@selector(sharerShowOtherAuthorizationErrorAlert:)]) {
         [self.shareDelegate sharerShowOtherAuthorizationErrorAlert:self];
     }
@@ -922,7 +1031,44 @@ static NSString *const kSHKStoredShareInfoKey=@"kSHKStoredShareInfo";
 
 - (void)sendShowSimpleErrorAlert {
     
-    [self sendDidFailWithError:[SHK error:SHKLocalizedString(@"There was a problem saving to %@", [[self class] sharerTitle])]];
+    [self sendDidFailWithError:[SHK error:SHKLocalizedString(@"There was a problem saving to %@.", [[self class] sharerTitle])]];
+}
+
+- (void)hideActivityIndicator {
+    
+    [self.shareDelegate hideActivityIndicatorForSharer:self];
+}
+
+- (void)displayActivity:(NSString *)activityDescription {
+    
+    [self.shareDelegate displayActivity:activityDescription forSharer:self];
+}
+
+- (void)displayCompleted:(NSString *)completionText {
+    
+    [self.shareDelegate displayCompleted:completionText forSharer:self];
+}
+
+- (void)showProgress:(CGFloat)progress {
+    
+    //SHKLog(@"progress: %f", progress);
+    
+    //workaround for buggy sdk's, e.g Dropbox can upload 1.06 of a file :(
+    if (progress > 1.0) {
+        progress = 1.0;
+    }
+    
+    long long uploadedBytes = (long long)(self.item.file.size * progress);
+    self.uploadInfo.bytesUploaded = uploadedBytes;
+    self.uploadInfo.uploadProgress = progress;
+    
+    if (!self.uploadInfo) {
+        self.uploadInfo = [[SHKUploadInfo alloc] initWithSharer:self];
+        [[SHK currentHelper] uploadInfoChanged:self.uploadInfo];
+    }
+    
+    [[NSNotificationCenter defaultCenter] postNotificationName:SHKUploadProgressNotification object:self userInfo:@{SHKUploadProgressInfoKeyName: self.uploadInfo}];
+    [self.shareDelegate showProgress:progress forSharer:self];
 }
 
 @end
