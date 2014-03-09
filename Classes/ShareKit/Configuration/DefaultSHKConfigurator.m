@@ -74,6 +74,13 @@
 	return @"";
 }
 
+// Vkontakte access permissions
+// permissions you want to use then accessing to service
+- (NSArray*)vkontaktePermissions {
+  return @[ @"wall", @"photos", @"friends" ];
+}
+
+
 /*
 Forces using Facebook-ios-sdk instead of Apple's native Social.framework and Accounts.framework. Pre iOS6 posting means using SHKFacebook, instead of SHKiOSFacebook. Consequences of this are that user logs in via SSO trip to Safari/Facebook.app. (Instead of getting credentials from iOS settings). This way also share form is ShareKit's instead of iOS native SLComposeViewController.
 One of the troubles with the native share form is that it gives IOS6 props on facebook instead of your app.

@@ -31,14 +31,16 @@
 #import "SharersCommonHeaders.h"
 #import "NSHTTPCookieStorage+DeleteForURL.h"
 
+// these are ways of getting back to the instance that made the request through statics
+// there are two so that the logic of their lifetimes is understandable.
+static SHKVkontakte *authingSHKVkontakte=nil;
+
 @interface SHKVkontakte()
 
 @property BOOL isCaptcha;
 @property (nonatomic, strong) NSString *accessUserId;
 @property (nonatomic, strong) NSString *accessToken;
 @property (nonatomic, strong) NSDate *expirationDate;
-
-- (void)getAccessCode;
 
 - (void)getUserInfo;
 - (void)getCaptcha;
@@ -54,6 +56,12 @@
 
 @implementation SHKVkontakte
 
+- (void)dealloc {
+	if (authingSHKVkontakte == self) {
+		authingSHKVkontakte = nil;
+	}
+}
+
 + (void)flushAccessToken 
 {
   NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -61,7 +69,7 @@
   [defaults removeObjectForKey:kSHKVkontakteAccessTokenKey];
   [defaults removeObjectForKey:kSHKVkontakteExpiryDateKey];
   [defaults removeObjectForKey:kSHKVkontakteAccessCodeKey];
-    [defaults removeObjectForKey:kSHKVkonakteUserInfo];
+  [defaults removeObjectForKey:kSHKVkonakteUserInfo];
   [defaults synchronize];
 }
 
@@ -149,57 +157,135 @@
 
 - (void)promptAuthorization
 {
-	SHKVkontakteOAuthView *rootView = [[SHKVkontakteOAuthView alloc] init];
-	rootView.appID = SHKCONFIG(vkontakteAppId);
-	rootView.delegate = self;
-	
-	// force view to load so we can set textView text
-	[rootView view];
-	
-	self.navigationBar.tintColor = SHKCONFIG_WITH_ARGUMENT(barTintForView:,rootView);
-	
-	[self pushViewController:rootView animated:NO];
-	
-	[[SHK currentHelper] showViewController:self];
+	[self saveItemForLater:SHKPendingShare];
+	if (authingSHKVkontakte) {
+    [[SHK currentHelper] removeSharerReference:authingSHKVkontakte];
+  }
+
+	authingSHKVkontakte = self;
+	[[SHK currentHelper] keepSharerReference:self];
+	[self openSessionWithAllowLoginUI:YES];
+}
+
+- (BOOL)openSessionWithAllowLoginUI:(BOOL)allowLoginUI {
+  NSArray* permissions = SHKCONFIG(vkontaktePermissions);
+  NSString* scope = [permissions componentsJoinedByString:@","];
+  NSString* clientId = SHKCONFIG(vkontakteAppId);
+  BOOL revokeAccess = YES;
+  BOOL forceOAuth = NO;
+  NSString* redirectUri = [NSString stringWithFormat:@"vk%@://authorize", clientId];
+  NSString* display = @"mobile";
+  
+  //  if (!inApp) {
+  if (YES) {
+    NSURL *urlToOpen = [NSURL URLWithString:
+                        [NSString stringWithFormat:@"vkauth://authorize?client_id=%@&scope=%@&revoke=%d",
+                         clientId,
+                         scope, revokeAccess ? 1:0]];
+    if (!forceOAuth && [[UIApplication sharedApplication] canOpenURL:urlToOpen])
+      [[UIApplication sharedApplication] openURL:urlToOpen];
+    else {
+      NSString* urlString = [NSString stringWithFormat:@"https://oauth.vk.com/authorize?client_id=%@&scope=%@&redirect_uri=%@&display=%@&response_type=token&revoke=%d", clientId, scope, redirectUri, display, revoke ? 1:0];
+      [[UIApplication sharedApplication] openURL:[NSURL URLWithString:urlString]];
+    }
+    //inapp
+  } else {
+    //    //Authorization through popup webview
+    //    [VKAuthorizeController presentForAuthorizeWithAppId:clientId
+    //                                         andPermissions:permissions
+    //                                           revokeAccess:revokeAccess
+    //                                            displayType:displayType];
+  }
+
+  
+  return YES;
 }
 
 
-- (void)getAccessCode
+
+
+
+
+
+
+
+
+- (void)promptAuthorizationOld
 {
-    //we can request AccessCode only if we already authorized
-    if ([self isAuthorized])
-    {
-        NSString *appID = SHKCONFIG(vkontakteAppId);
-        NSString *reqURl = [NSString stringWithFormat:@"http://api.vk.com/oauth/authorize?client_id=%@&scope=wall,photos&redirect_uri=http://api.vk.com/blank.html&display=touch&response_type=code", appID];
-        [SHKRequest startWithURL:[NSURL URLWithString:reqURl]
-                          params:nil
-                          method:@"GET"
-                      completion:^(SHKRequest *request) {
-                          
-                          if (request.success)
-                          {
-                              NSString *accessCode = [SHKVkontakteOAuthView stringBetweenString:@"code="
-                                                                                      andString:@"&"
-                                                                                    innerString:request.response.URL.absoluteString];
-                              
-                              if(accessCode)
-                              {
-                                  [[NSUserDefaults standardUserDefaults] setObject:accessCode forKey:kSHKVkontakteAccessCodeKey];
-                                  [[NSUserDefaults standardUserDefaults] synchronize];
-                                  [self authDidFinish: YES];
-                              } else
-                              {
-                                  [self authDidFinish: NO];
-                              }
-                          } else
-                          {
-                              [self authDidFinish: NO];
-                          }
-                      }];
-    } else
-    {
-        [self authDidFinish: NO];
+  NSArray* permissions = SHKCONFIG(vkontaktePermissions); //@[@"wall",@"photos",@"friends",@"offline"];//@[VK_PER_FRIENDS, VK_PER_WALL, VK_PER_AUDIO, VK_PER_PHOTOS, VK_PER_NOHTTPS, VK_PER_MESSAGES];
+  NSString* scope = [permissions componentsJoinedByString:@","];
+  NSString* clientId = SHKCONFIG(vkontakteAppId);
+  BOOL revokeAccess = YES;
+  BOOL forceOAuth = NO;
+  NSString* redirectUri = [NSString stringWithFormat:@"vk%@://authorize", clientId];
+  NSString* display = @"mobile";
+  
+//  if (!inApp) {
+  if (YES) {
+    NSURL *urlToOpen = [NSURL URLWithString:
+                        [NSString stringWithFormat:@"vkauth://authorize?client_id=%@&scope=%@&revoke=%d",
+                         clientId,
+                         scope, revokeAccess ? 1:0]];
+    if (!forceOAuth && [[UIApplication sharedApplication] canOpenURL:urlToOpen])
+      [[UIApplication sharedApplication] openURL:urlToOpen];
+    else {
+      NSString* urlString = [NSString stringWithFormat:@"https://oauth.vk.com/authorize?client_id=%@&scope=%@&redirect_uri=%@&display=%@&response_type=token&revoke=%d", clientId, scope, redirectUri, display, revoke ? 1:0];
+      [[UIApplication sharedApplication] openURL:[NSURL URLWithString:urlString]];
     }
+//inapp
+  } else {
+//    //Authorization through popup webview
+//    [VKAuthorizeController presentForAuthorizeWithAppId:clientId
+//                                         andPermissions:permissions
+//                                           revokeAccess:revokeAccess
+//                                            displayType:displayType];
+  }
+  
+  
+
+//	SHKVkontakteOAuthView *rootView = [[SHKVkontakteOAuthView alloc] init];
+//	rootView.appID = SHKCONFIG(vkontakteAppId);
+//	rootView.delegate = self;
+//	
+//	// force view to load so we can set textView text
+//	[rootView view];
+//	
+//	self.navigationBar.tintColor = SHKCONFIG_WITH_ARGUMENT(barTintForView:,rootView);
+//	
+//	[self pushViewController:rootView animated:NO];
+//	
+//	[[SHK currentHelper] showViewController:self];
+}
+
++ (NSDictionary *)explodeQueryString:(NSString *)queryString {
+	NSArray *keyValuePairs = [queryString componentsSeparatedByString:@"&"];
+	NSMutableDictionary *parameters    = [NSMutableDictionary new];
+	for (NSString *keyValueString in keyValuePairs) {
+		NSArray *keyValueArray = [keyValueString componentsSeparatedByString:@"="];
+		parameters[keyValueArray[0]] = keyValueArray[1];
+	}
+  
+	return [[NSDictionary alloc] initWithDictionary:parameters];
+}
+
+/*
+ * Callback for session changes.
+ */
+- (void)sessionStateChangedWithError:(NSError *)error {
+  if (error) {
+    [[self class] flushAccessToken];
+  }
+  
+  if (!error && authingSHKVkontakte == self) {
+    [self restoreItem];
+    [self tryPendingAction];
+    [self authComplete];
+  }
+  
+	if (authingSHKVkontakte == self) {
+		authingSHKVkontakte = nil;
+		[[SHK currentHelper] removeSharerReference:self];
+	}
 }
 
 - (void)getUserInfo
@@ -242,13 +328,49 @@
     }
 }
 
++ (BOOL)handleOpenURL:(NSURL*)url {
+	NSString *urlString = [url absoluteString];
+	NSString *parametersString = [urlString substringFromIndex:[urlString rangeOfString:@"#"].location + 1];
+	if (!parametersString.length) {
+    [authingSHKVkontakte sessionStateChangedWithError:[NSError errorWithDomain:@"vk.com" code:0 userInfo:@{ NSLocalizedDescriptionKey : @"no params" }]];
+		return NO;
+	}
+  
+	NSDictionary *parametersDict = [self explodeQueryString:parametersString];
+	if (parametersDict[@"error"] || parametersDict[@"fail"]) {
+    NSDictionary* errorDesc = @{ NSLocalizedDescriptionKey : [parametersDict[@"error_description"] stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding] };
+    [authingSHKVkontakte sessionStateChangedWithError:[NSError errorWithDomain:@"vk.com" code:0 userInfo:errorDesc]];
+		return NO;
+	}
+	else if (parametersDict[@"success"]) {
+    NSUserDefaults* userDefaults = [NSUserDefaults standardUserDefaults];
+    [userDefaults setObject:parametersDict[@"user_id"] forKey:kSHKVkonakteUserId];
+    [userDefaults setObject:parametersDict[@"access_token"] forKey:kSHKVkontakteAccessTokenKey];
+//    [userDefaults setObject:[[NSDate date] dateByAddingTimeInterval:[[parametersDict@"expires_in"] doubleValue]] forKey:kSHKVkontakteExpiryDateKey];
+    [[NSUserDefaults standardUserDefaults] setObject:[[NSDate date] dateByAddingTimeInterval:86400] forKey:kSHKVkontakteExpiryDateKey];
+    [userDefaults synchronize];
+    
+    [authingSHKVkontakte sessionStateChangedWithError:nil];
+	} else {
+    NSUserDefaults* userDefaults = [NSUserDefaults standardUserDefaults];
+    [userDefaults setObject:parametersDict[@"user_id"] forKey:kSHKVkonakteUserId];
+    [userDefaults setObject:parametersDict[@"access_token"] forKey:kSHKVkontakteAccessTokenKey];
+//    [userDefaults setObject:[[NSDate date] dateByAddingTimeInterval:[parametersDict[@"expires_in"] doubleValue]] forKey:kSHKVkontakteExpiryDateKey];
+    [[NSUserDefaults standardUserDefaults] setObject:[[NSDate date] dateByAddingTimeInterval:86400] forKey:kSHKVkontakteExpiryDateKey];
+    [userDefaults synchronize];
+    
+    [authingSHKVkontakte sessionStateChangedWithError:nil];
+	}
+  
+	return YES;
+}
+
+
 #pragma mark -
 
 - (void) authComplete 
 {
-    [self getAccessCode];
-    
-    //[self authDidFinish: YES];
+    [self authDidFinish: YES];
 	if (self.item) 
 		[self share];
 }
