@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name          = 'ShareKit'
-  s.version       = '2.5.6'
+  s.version       = '2.5.9'
   s.platform      = :ios, '6.0'
   s.summary       = 'Drop in sharing features for all iPhone and iPad apps.'
   s.homepage      = 'http://getsharekit.com/'
@@ -19,15 +19,19 @@ Pod::Spec.new do |s|
     core.source_files  = 'Classes/ShareKit/{Configuration,Core,UI}/**/*.{h,m,c}', 'Classes/ShareKit/Sharers/Actions/**/*.{h,m,c}'
     core.exclude_files = non_arc_files
     core.frameworks    = 'SystemConfiguration', 'Security', 'MessageUI', "AVFoundation", "MobileCoreServices", "CoreMedia", "Social"
-    core.dependency 'SSKeychain', '~> 0.2.1'
-    core.dependency 'SSToolkit', '~> 1.0.4'
+    core.dependency 'SSKeychain', '~> 1.2.2'
+    core.dependency 'SAMTextView', '~> 0.2.1'
     core.dependency 'ShareKit/Reachability'
     core.dependency 'ShareKit/NoARC'
+    core.dependency 'SDWebImage'
+    core.dependency 'UIActivityIndicator-for-SDWebImage'
   end
 
   s.subspec 'NoARC' do |noarc|
+    noarc.dependency 'PKMultipartInputStream'
     noarc.requires_arc = false
     noarc.source_files = non_arc_files
+    noarc.dependency 'ShareKit/Core'
   end
 
   s.subspec 'Reachability' do |reachability|
@@ -37,7 +41,7 @@ Pod::Spec.new do |s|
 
   s.subspec 'Evernote' do |evernote|
     evernote.source_files = 'Classes/ShareKit/Sharers/Services/Evernote/**/*.{h,m}'
-    evernote.dependency 'Evernote-SDK-iOS', '~> 1.3.0'
+    evernote.dependency 'Evernote-SDK-iOS', '~> 1.3.1'
     evernote.dependency 'ShareKit/Core'
     evernote.libraries = 'xml2'
     evernote.xcconfig = { 'HEADER_SEARCH_PATHS' => '$(SDKROOT)/usr/include/libxml2' }
@@ -149,14 +153,37 @@ Pod::Spec.new do |s|
     instagram.source_files = 'Classes/ShareKit/Sharers/Services/Instagram/**/*.{h,m}'
     instagram.dependency 'ShareKit/Core'
   end
+  
+  s.subspec 'Imgur' do |imgur|
+    imgur.source_files = 'Classes/ShareKit/Sharers/Services/Imgur/**/*.{h,m}'
+    imgur.dependency 'ShareKit/Core'
+  end
+
+  s.subspec 'Pinterest' do |pinterest|
+    pinterest.source_files = 'Classes/ShareKit/Sharers/Services/Pinterest/**/*.{h,m}'
+    pinterest.dependency 'Pinterest-iOS'
+    pinterest.dependency 'ShareKit/Core'
+  end
+
+  s.subspec 'OneNote' do |onenote|
+    onenote.source_files = 'Classes/ShareKit/Sharers/Services/OneNote/**/*.{h,m}'
+    onenote.dependency 'ShareKit/Core'
+    onenote.vendored_frameworks = 'Frameworks/LiveSDK.framework'
+    onenote.resource = 'Frameworks/LiveSDK.framework'
+  end
+
+  s.subspec 'ReadingList' do |readinglist|
+    readinglist.source_files = 'Classes/ShareKit/Sharers/Services/Reading List/**/*.{h,m}'
+    readinglist.dependency 'ShareKit/Core'
+    readinglist.weak_frameworks    = 'SafariServices'
+  end
 
   s.subspec 'GooglePlus' do |googleplus|
-    googleplus.source_files = 'Classes/ShareKit/Sharers/Services/Google Plus/**/*.{h,m}'
+    googleplus.source_files = 'Classes/ShareKit/Sharers/Services/Google Plus/**/*.{h,m}', 'Frameworks/GoogleOpenSource.framework/Versions/A/Headers/*.h'
     googleplus.vendored_frameworks = 'Frameworks/GooglePlus.framework', 'Frameworks/GoogleOpenSource.framework'
     googleplus.resource = "Frameworks/GooglePlus.bundle"
     googleplus.framework = 'AssetsLibrary', 'CoreLocation', 'CoreMotion', 'CoreGraphics', 'CoreText', 'MediaPlayer', 'Security', 'SystemConfiguration', 'AddressBook'
     googleplus.dependency 'ShareKit/Core'
-    googleplus.xcconfig = { 'HEADER_SEARCH_PATHS' => '"${PODS_ROOT}/ShareKit/Frameworks/GoogleOpenSource.framework/Versions/A/Headers"' }
   end
 
   #working version of YouTube subspec. It uses cutting edge Google-API-Client, which is incopatible with current GooglePlus (GooglePlus needs older version). Unfortunately older version of Google-API-Client is not available on CocoaPods. You have to choose between YouTube or GooglePlus - can not use both at the moment, as there would be duplicate symbols (Google-API-Client vs. GoogleOpenSource.framework).
@@ -164,10 +191,7 @@ Pod::Spec.new do |s|
   #s.subspec 'YouTube' do |youtube|
     #youtube.source_files = 'Classes/ShareKit/Sharers/Services/YouTube/**/*.{h,m}'
     #youtube.dependency 'ShareKit/Core'
-    #youtube.dependency 'Google-API-Client/Services/YouTube'
-    #youtube.dependency 'Google-API-Client/Common'
-    #youtube.dependency 'Google-API-Client/Objects'
-    #youtube.dependency 'Google-API-Client/Utilities'
+    #youtube.dependency 'Google-API-Client/YouTube'
   #end
 
   #This version of GooglePlus subspec can coexist with YouTube. The prerequisite is that GooglePlus.framework can be used with 'Google-API-Client/Services/Plus'. Otherwise we must use GoogleOpenSource.framework, which causes conflicts with youtube subspec
@@ -178,10 +202,7 @@ Pod::Spec.new do |s|
     #googleplus.resource = "Frameworks/GooglePlus.bundle"
     #googleplus.framework = 'AssetsLibrary', 'CoreLocation', 'CoreMotion', 'CoreGraphics', 'CoreText', 'MediaPlayer', 'Security', 'SystemConfiguration', 'AddressBook'
     #googleplus.dependency 'ShareKit/Core'
-    #googleplus.dependency 'Google-API-Client/Common'
-    #googleplus.dependency 'Google-API-Client/Objects'
-    #googleplus.dependency 'Google-API-Client/Utilities'
-    #googleplus.dependency 'Google-API-Client/Services/Plus'
+    #googleplus.dependency 'Google-API-Client/Plus'
     #googleplus.dependency 'OpenInChrome'
     #googleplus.dependency 'gtm-logger'
   #end

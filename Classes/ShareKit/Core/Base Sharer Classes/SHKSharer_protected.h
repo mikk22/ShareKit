@@ -27,6 +27,7 @@
 #import "SHKItem.h"
 
 @class SHKUploadInfo;
+@class SHKSession;
 
 typedef enum
 {
@@ -36,7 +37,6 @@ typedef enum
     SHKPendingSend, //when ShareKit detects invalid credentials AFTER user sends. Item is resent without showing edit dialogue (user edited already).
 } SHKSharerPendingAction;
 
-@class SHKRequest;
 @class SHKFormController;
 @class SHKFormOptionController;
 @class SHKFile;
@@ -50,7 +50,9 @@ typedef enum
 
 ///Sharers, which are able to report upload progress (usually large file sharers, such as Dropbox or YouTube) store upload info statistics here.
 @property (nonatomic, strong) SHKUploadInfo *uploadInfo;
-//@property (nonatomic) BOOL uploadProgressAvailable;
+
+///NSURLSession wrapper reference.
+@property (nonatomic, strong) SHKSession *networkSession;
 
 //readonly public properties
 @property (nonatomic, strong) NSError *lastError;
@@ -82,6 +84,7 @@ typedef enum
 
 /*! used by subclasses when user has to quit the app during share process - e.g. during Facebook SSO trip to facebook app or browser. These methods save item temporarily to defaults and read it back. Data attachments (filedata, image) are stored as separate files in cache dir !*/
 - (void)saveItemForLater:(SHKSharerPendingAction)inPendingAction;
+///returns YES if item was found and restored.
 - (BOOL)restoreItem;
 
 // useful for handling custom posting error states
@@ -126,7 +129,6 @@ typedef enum
 - (void)hideActivityIndicator;
 - (void)displayActivity:(NSString *)activityDescription;
 - (void)displayCompleted:(NSString *)completionText;
-- (void)showProgress:(CGFloat)progress;
 
 #pragma mark -
 #pragma mark Share Form
